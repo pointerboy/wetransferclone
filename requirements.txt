@@ -1,0 +1,5 @@
+fastapi
+uvicorn
+b2sdk
+python-multipart
+jinja2
