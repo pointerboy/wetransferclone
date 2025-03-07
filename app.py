@@ -22,8 +22,8 @@ STORAGE_BASE_DIR = "/mnt/disk"  # Base directory for all storage operations
 TEMP_UPLOAD_DIR = os.path.join(STORAGE_BASE_DIR, "temp_uploads")  # Temporary upload directory
 TOOLS_DIR = os.path.join(STORAGE_BASE_DIR, "tools")  # Tools directory
 MAX_TEMP_STORAGE = 90 * 1024 * 1024 * 1024  # 90GB max temp storage (leaving some buffer for system)
-CHUNK_SIZE = 8 * 1024 * 1024  # 8MB chunks for faster file operations
-MAX_CONCURRENT_UPLOADS = 8  # Increased concurrent uploads for better throughput
+CHUNK_SIZE = 64 * 1024 * 1024  # 64MB chunks for faster file operations
+MAX_CONCURRENT_UPLOADS = 16  # Increased concurrent uploads for better throughput
 CACHE_EXPIRY = 24 * 60 * 60  # 24 hours cache expiry
 
 # Ensure directories exist with proper permissions
@@ -1246,18 +1246,24 @@ memory_buffer_size = 200M
                         
                         # Configure upload settings
                         upload_settings = {
-                            'min_part_size': 100 * 1024 * 1024,  # 100MB minimum part size
-                            'max_part_size': 100 * 1024 * 1024,  # 100MB maximum part size
-                            'max_concurrent_uploads': 8,  # Number of concurrent uploads
+                            'min_part_size': 200 * 1024 * 1024,  # 200MB minimum part size
+                            'max_part_size': 200 * 1024 * 1024,  # 200MB maximum part size
+                            'max_concurrent_uploads': 16,  # Increased concurrent uploads
                             'max_retries': 3,  # Number of retries for failed uploads
                             'retry_delay': 5,  # Delay between retries in seconds
+                            'upload_buffer_size': 200 * 1024 * 1024,  # 200MB upload buffer
+                            'download_buffer_size': 200 * 1024 * 1024,  # 200MB download buffer
+                            'max_upload_speed': 0,  # No speed limit
+                            'max_download_speed': 0,  # No speed limit
+                            'thread_count': 16,  # Number of threads for parallel operations
                         }
                         
                         # Start the upload
                         file_info = {
                             'Content-Type': content_type,
                             'X-Bz-File-Name': safe_filename,
-                            'X-Bz-Content-Sha1': 'do_not_verify'  # Skip SHA1 verification for faster uploads
+                            'X-Bz-Content-Sha1': 'do_not_verify',  # Skip SHA1 verification for faster uploads
+                            'X-Bz-Info-B2-Cache-Control': 'max-age=604800'  # 7 days cache
                         }
                         
                         # Upload the file
