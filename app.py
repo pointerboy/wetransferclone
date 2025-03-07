@@ -18,11 +18,13 @@ FILES_DB = "files.json"
 FILE_EXPIRY_DAYS = 7
 
 # Storage configuration
-STORAGE_BASE_DIR = "/mnt/storage"  # Base directory for all storage operations
+STORAGE_BASE_DIR = "/mnt/disk"  # Base directory for all storage operations
 TEMP_UPLOAD_DIR = os.path.join(STORAGE_BASE_DIR, "temp_uploads")  # Temporary upload directory
 TOOLS_DIR = os.path.join(STORAGE_BASE_DIR, "tools")  # Tools directory
-MAX_TEMP_STORAGE = 50 * 1024 * 1024 * 1024  # 50GB max temp storage (leaving some buffer)
-CHUNK_SIZE = 4 * 1024 * 1024  # 4MB chunks for file operations
+MAX_TEMP_STORAGE = 90 * 1024 * 1024 * 1024  # 90GB max temp storage (leaving some buffer for system)
+CHUNK_SIZE = 2 * 1024 * 1024  # 2MB chunks for file operations (reduced for better memory management)
+MAX_CONCURRENT_UPLOADS = 4  # Limit concurrent uploads to prevent memory issues
+CACHE_EXPIRY = 24 * 60 * 60  # 24 hours cache expiry
 
 # Ensure directories exist with proper permissions
 for directory in [STORAGE_BASE_DIR, TEMP_UPLOAD_DIR, TOOLS_DIR]:
@@ -53,12 +55,12 @@ def cleanup_temp_storage():
     current_usage = get_temp_storage_usage()
     if current_usage > MAX_TEMP_STORAGE:
         print(f"Temporary storage usage ({current_usage / (1024**3):.2f}GB) exceeds limit. Cleaning up...")
-        # Delete files older than 1 hour
+        # Delete files older than cache expiry
         current_time = time.time()
         for dirpath, dirnames, filenames in os.walk(TEMP_UPLOAD_DIR):
             for f in filenames:
                 fp = os.path.join(dirpath, f)
-                if current_time - os.path.getmtime(fp) > 3600:  # 1 hour
+                if current_time - os.path.getmtime(fp) > CACHE_EXPIRY:
                     try:
                         os.remove(fp)
                         print(f"Deleted old temporary file: {fp}")
@@ -1172,192 +1174,193 @@ type = b2
 account = {B2_APPLICATION_KEY_ID}
 key = {B2_APPLICATION_KEY}
 hard_delete = true
-upload_cutoff = 500M
-chunk_size = 200M
-max_upload_parts = 100
-max_upload_concurrency = 8
+upload_cutoff = 100M
+chunk_size = 50M
+max_upload_parts = 50
+max_upload_concurrency = 4
 max_upload_speed = 0
 max_download_speed = 0
+buffer_size = 50M
+memory_buffer_size = 50M
 """)
 
         files_data = []
         upload_tasks = []
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_UPLOADS)  # Limit concurrent uploads
 
         async def upload_single_file(file: UploadFile, file_path: str, content_type: str) -> dict:
-            try:
-                if not file.filename:
-                    raise HTTPException(status_code=400, detail="File name is required")
-                
-                print(f"\n=== Processing file: {file.filename} ===")
-                print(f"File size: {file.size} bytes")
-                
-                # Validate filename
-                safe_filename = file.filename.encode('utf-8').decode('utf-8')
-                safe_filename = "".join(c for c in safe_filename if c.isprintable())
-                validate_b2_filename(safe_filename)
-                
-                # Create a unique temporary file path
-                temp_file_path = os.path.join(TEMP_UPLOAD_DIR, f"{uuid.uuid4()}_{safe_filename}")
-                
+            async with semaphore:  # Use semaphore to limit concurrent uploads
                 try:
-                    print("Starting file read...")
-                    # Read and write in chunks with timeout
-                    total_size = 0
-                    last_progress_time = time.time()
-                    last_progress_size = 0
+                    if not file.filename:
+                        raise HTTPException(status_code=400, detail="File name is required")
                     
-                    with open(temp_file_path, 'wb') as temp_file:
-                        while True:
-                            try:
-                                chunk = await asyncio.wait_for(file.read(CHUNK_SIZE), timeout=30.0)
-                                if not chunk:
-                                    break
-                                temp_file.write(chunk)
-                                total_size += len(chunk)
-                                
-                                # Update progress every 2 seconds
-                                current_time = time.time()
-                                if current_time - last_progress_time >= 2:
-                                    bytes_since_last = total_size - last_progress_size
-                                    speed = bytes_since_last / (current_time - last_progress_time)
-                                    print(f"Progress: {total_size} bytes written ({format(total_size/file.size*100, '.1f')}%)")
-                                    print(f"Current speed: {format(speed/1024/1024, '.1f')} MB/s")
-                                    last_progress_time = current_time
-                                    last_progress_size = total_size
-                                    
-                            except asyncio.TimeoutError:
-                                print("Upload timeout - connection too slow")
-                                raise HTTPException(
-                                    status_code=408,
-                                    detail="Upload timeout - connection too slow"
-                                )
+                    print(f"\n=== Processing file: {file.filename} ===")
+                    print(f"File size: {file.size} bytes")
                     
-                    temp_file.flush()
-                    print("File read complete, starting rclone upload...")
+                    # Validate filename
+                    safe_filename = file.filename.encode('utf-8').decode('utf-8')
+                    safe_filename = "".join(c for c in safe_filename if c.isprintable())
+                    validate_b2_filename(safe_filename)
+                    
+                    # Create a unique temporary file path
+                    temp_file_path = os.path.join(TEMP_UPLOAD_DIR, f"{uuid.uuid4()}_{safe_filename}")
                     
                     try:
-                        # Use rclone to copy the file to B2 with optimized settings
-                        print("Starting rclone process...")
-                        process = await asyncio.create_subprocess_exec(
-                            rclone_path,
-                            "--config", rclone_config,
-                            "--progress",
-                            "--stats", "1s",
-                            "--stats-one-line",
-                            "--transfers", "16",
-                            "--checkers", "32",
-                            "--buffer-size", "200M",
-                            "--contimeout", "60s",
-                            "--timeout", "300s",
-                            "--retries", "3",
-                            "--retries-sleep", "5s",
-                            "copy",
-                            temp_file_path,
-                            f"b2:{B2_BUCKET_NAME}/{file_path}",
-                            stdout=asyncio.subprocess.PIPE,
-                            stderr=asyncio.subprocess.PIPE
-                        )
+                        print("Starting file read...")
+                        # Read and write in chunks with timeout
+                        total_size = 0
+                        last_progress_time = time.time()
+                        last_progress_size = 0
                         
-                        print("Waiting for rclone process...")
-                        
-                        # Monitor rclone progress in real-time
-                        async def monitor_progress():
-                            try:
-                                while True:
-                                    line = await asyncio.wait_for(process.stdout.readline(), timeout=5.0)
-                                    if not line:
+                        # Open file in binary write mode
+                        with open(temp_file_path, 'wb') as temp_file:
+                            while True:
+                                try:
+                                    chunk = await asyncio.wait_for(file.read(CHUNK_SIZE), timeout=30.0)
+                                    if not chunk:
                                         break
-                                    line = line.decode().strip()
-                                    if line:
-                                        print(f"rclone progress: {line}")
+                                    temp_file.write(chunk)
+                                    total_size += len(chunk)
                                     
-                                    # Check for errors in stderr
-                                    try:
-                                        error_line = await asyncio.wait_for(process.stderr.readline(), timeout=0.1)
-                                        if error_line:
-                                            error_text = error_line.decode().strip()
-                                            if error_text:
-                                                print(f"rclone error: {error_text}")
-                                                raise Exception(f"rclone error: {error_text}")
-                                    except asyncio.TimeoutError:
-                                        continue
-                            except asyncio.TimeoutError:
-                                print("Progress monitoring timeout - process might be stuck")
-                                process.kill()
-                                raise Exception("Upload process timed out - no progress updates received")
+                                    # Update progress every 2 seconds
+                                    current_time = time.time()
+                                    if current_time - last_progress_time >= 2:
+                                        bytes_since_last = total_size - last_progress_size
+                                        speed = bytes_since_last / (current_time - last_progress_time)
+                                        print(f"Progress: {total_size} bytes written ({format(total_size/file.size*100, '.1f')}%)")
+                                        print(f"Current speed: {format(speed/1024/1024, '.1f')} MB/s")
+                                        last_progress_time = current_time
+                                        last_progress_size = total_size
+                                        
+                                except asyncio.TimeoutError:
+                                    print("Upload timeout - connection too slow")
+                                    raise HTTPException(
+                                        status_code=408,
+                                        detail="Upload timeout - connection too slow"
+                                    )
                         
-                        # Start progress monitoring
-                        progress_task = asyncio.create_task(monitor_progress())
+                        print("File read complete, starting rclone upload...")
                         
-                        # Wait for the process with timeout
                         try:
-                            await asyncio.wait_for(process.wait(), timeout=600.0)  # 10 minute timeout
-                            await progress_task
-                            print("rclone process completed")
-                        except asyncio.TimeoutError:
-                            print("rclone process timed out")
-                            process.kill()
-                            raise HTTPException(
-                                status_code=408,
-                                detail="Upload timeout - process took too long"
+                            # Use rclone to copy the file to B2 with optimized settings
+                            print("Starting rclone process...")
+                            process = await asyncio.create_subprocess_exec(
+                                rclone_path,
+                                "--config", rclone_config,
+                                "--progress",
+                                "--stats", "1s",
+                                "--stats-one-line",
+                                "--transfers", "4",  # Reduced for memory efficiency
+                                "--checkers", "8",    # Reduced for memory efficiency
+                                "--buffer-size", "50M",
+                                "--contimeout", "60s",
+                                "--timeout", "300s",
+                                "--retries", "3",
+                                "--retries-sleep", "5s",
+                                "copy",
+                                temp_file_path,
+                                f"b2:{B2_BUCKET_NAME}/{file_path}",
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.PIPE
                             )
                         except Exception as e:
-                            print(f"Error during rclone process: {str(e)}")
-                            process.kill()
+                            print(f"Error starting rclone process: {str(e)}")
+                            raise HTTPException(
+                                status_code=500,
+                                detail=f"Failed to start upload process: {str(e)}"
+                            )
+                            
+                            # Monitor rclone progress in real-time
+                            async def monitor_progress():
+                                try:
+                                    while True:
+                                        line = await asyncio.wait_for(process.stdout.readline(), timeout=5.0)
+                                        if not line:
+                                            break
+                                        line = line.decode().strip()
+                                        if line:
+                                            print(f"rclone progress: {line}")
+                                        
+                                        # Check for errors in stderr
+                                        try:
+                                            error_line = await asyncio.wait_for(process.stderr.readline(), timeout=0.1)
+                                            if error_line:
+                                                error_text = error_line.decode().strip()
+                                                if error_text:
+                                                    print(f"rclone error: {error_text}")
+                                                    raise Exception(f"rclone error: {error_text}")
+                                        except asyncio.TimeoutError:
+                                            continue
+                                except asyncio.TimeoutError:
+                                    print("Progress monitoring timeout - process might be stuck")
+                                    process.kill()
+                                    raise Exception("Upload process timed out - no progress updates received")
+                            
+                            # Start progress monitoring
+                            progress_task = asyncio.create_task(monitor_progress())
+                            
+                            # Wait for the process with timeout
+                            try:
+                                await asyncio.wait_for(process.wait(), timeout=600.0)  # 10 minute timeout
+                                await progress_task
+                                print("rclone process completed")
+                            except asyncio.TimeoutError:
+                                print("rclone process timed out")
+                                process.kill()
+                                raise HTTPException(
+                                    status_code=408,
+                                    detail="Upload timeout - process took too long"
+                                )
+                            except Exception as e:
+                                print(f"Error during rclone process: {str(e)}")
+                                process.kill()
+                                raise HTTPException(
+                                    status_code=500,
+                                    detail=f"Failed to upload to B2: {str(e)}"
+                                )
+                            
+                            if process.returncode != 0:
+                                stderr_text = (await process.stderr.read()).decode()
+                                print(f"rclone error: {stderr_text}")
+                                raise HTTPException(
+                                    status_code=500,
+                                    detail=f"Failed to upload to B2: {stderr_text}"
+                                )
+                            
+                            stdout_text = (await process.stdout.read()).decode()
+                            print(f"rclone output: {stdout_text}")
+                            
+                            # Generate download URL
+                            file_url = f"https://f003.backblazeb2.com/file/{B2_BUCKET_NAME}/{file_path}"
+                            print(f"File uploaded successfully: {file_url}")
+                            
+                            return {
+                                "url": file_url,
+                                "filename": safe_filename,
+                                "file_path": file_path,
+                                "size": total_size,
+                                "content_type": content_type
+                            }
+                            
+                        except Exception as e:
+                            print(f"rclone error: {str(e)}")
                             raise HTTPException(
                                 status_code=500,
                                 detail=f"Failed to upload to B2: {str(e)}"
                             )
-                        
-                        if process.returncode != 0:
-                            stderr_text = (await process.stderr.read()).decode()
-                            print(f"rclone error: {stderr_text}")
-                            raise HTTPException(
-                                status_code=500,
-                                detail=f"Failed to upload to B2: {stderr_text}"
-                            )
-                        
-                        stdout_text = (await process.stdout.read()).decode()
-                        print(f"rclone output: {stdout_text}")
-                        
-                        # Generate download URL
-                        file_url = f"https://f003.backblazeb2.com/file/{B2_BUCKET_NAME}/{file_path}"
-                        print(f"File uploaded successfully: {file_url}")
-                        
-                        return {
-                            "url": file_url,
-                            "filename": safe_filename,
-                            "file_path": file_path,
-                            "size": total_size,
-                            "content_type": content_type
-                        }
-                        
-                    except Exception as e:
-                        print(f"rclone error: {str(e)}")
-                        raise HTTPException(
-                            status_code=500,
-                            detail=f"Failed to upload to B2: {str(e)}"
-                        )
-                    finally:
-                        # Clean up temporary file
-                        try:
-                            os.unlink(temp_file_path)
-                            print("Temporary file cleaned up")
-                        except Exception as e:
-                            print(f"Error cleaning up temporary file: {str(e)}")
+                        finally:
+                            # Clean up temporary file
+                            try:
+                                os.unlink(temp_file_path)
+                                print("Temporary file cleaned up")
+                            except Exception as e:
+                                print(f"Error cleaning up temporary file: {str(e)}")
                 except Exception as e:
-                    print(f"Error writing to temporary file: {str(e)}")
+                    print(f"Error processing file {file.filename}: {str(e)}")
                     raise HTTPException(
                         status_code=500,
-                        detail=f"Failed to write temporary file: {str(e)}"
+                        detail=f"Error processing file {file.filename}: {str(e)}"
                     )
-
-            except Exception as e:
-                print(f"Error processing file {file.filename}: {str(e)}")
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Error processing file {file.filename}: {str(e)}"
-                )
 
         # Process files in parallel
         for file in files:
