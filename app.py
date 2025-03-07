@@ -1239,94 +1239,39 @@ memory_buffer_size = 200M
                                         detail="Upload timeout - connection too slow"
                                     )
                         
-                        print("File read complete, starting rclone upload...")
+                        print("File read complete, starting B2 upload...")
                         
-                        # Use rclone to copy the file to B2 with optimized settings
-                        print("Starting rclone process...")
-                        process = await asyncio.create_subprocess_exec(
-                            rclone_path,
-                            "--config", rclone_config,
-                            "--progress",
-                            "--stats", "1s",
-                            "--stats-one-line",
-                            "--transfers", "8",  # Increased for better throughput
-                            "--checkers", "16",   # Increased for faster verification
-                            "--buffer-size", "200M",
-                            "--contimeout", "60s",
-                            "--timeout", "300s",
-                            "--retries", "3",
-                            "--retries-sleep", "5s",
-                            "--fast-list",  # Enable fast list mode
-                            "--drive-acknowledge-abuse",  # Skip file size checks
-                            "copy",
-                            temp_file_path,
-                            f"b2:{B2_BUCKET_NAME}/{file_path}",
-                            stdout=asyncio.subprocess.PIPE,
-                            stderr=asyncio.subprocess.PIPE
+                        # Upload to B2 using the SDK
+                        print("Starting B2 upload...")
+                        
+                        # Configure upload settings
+                        upload_settings = {
+                            'min_part_size': 100 * 1024 * 1024,  # 100MB minimum part size
+                            'max_part_size': 100 * 1024 * 1024,  # 100MB maximum part size
+                            'max_concurrent_uploads': 8,  # Number of concurrent uploads
+                            'max_retries': 3,  # Number of retries for failed uploads
+                            'retry_delay': 5,  # Delay between retries in seconds
+                        }
+                        
+                        # Start the upload
+                        file_info = {
+                            'Content-Type': content_type,
+                            'X-Bz-File-Name': safe_filename,
+                            'X-Bz-Content-Sha1': 'do_not_verify'  # Skip SHA1 verification for faster uploads
+                        }
+                        
+                        # Upload the file
+                        uploaded_file = bucket.upload_local_file(
+                            local_file=temp_file_path,
+                            file_name=file_path,
+                            file_info=file_info,
+                            **upload_settings
                         )
                         
-                        # Monitor rclone progress in real-time
-                        async def monitor_progress():
-                            try:
-                                while True:
-                                    line = await asyncio.wait_for(process.stdout.readline(), timeout=5.0)
-                                    if not line:
-                                        break
-                                    line = line.decode().strip()
-                                    if line:
-                                        print(f"rclone progress: {line}")
-                                    
-                                    # Check for errors in stderr
-                                    try:
-                                        error_line = await asyncio.wait_for(process.stderr.readline(), timeout=0.1)
-                                        if error_line:
-                                            error_text = error_line.decode().strip()
-                                            if error_text:
-                                                print(f"rclone error: {error_text}")
-                                                raise Exception(f"rclone error: {error_text}")
-                                    except asyncio.TimeoutError:
-                                        continue
-                            except asyncio.TimeoutError:
-                                print("Progress monitoring timeout - process might be stuck")
-                                process.kill()
-                                raise Exception("Upload process timed out - no progress updates received")
-                        
-                        # Start progress monitoring
-                        progress_task = asyncio.create_task(monitor_progress())
-                        
-                        # Wait for the process with timeout
-                        try:
-                            await asyncio.wait_for(process.wait(), timeout=600.0)  # 10 minute timeout
-                            await progress_task
-                            print("rclone process completed")
-                        except asyncio.TimeoutError:
-                            print("rclone process timed out")
-                            process.kill()
-                            raise HTTPException(
-                                status_code=408,
-                                detail="Upload timeout - process took too long"
-                            )
-                        except Exception as e:
-                            print(f"Error during rclone process: {str(e)}")
-                            process.kill()
-                            raise HTTPException(
-                                status_code=500,
-                                detail=f"Failed to upload to B2: {str(e)}"
-                            )
-                        
-                        if process.returncode != 0:
-                            stderr_text = (await process.stderr.read()).decode()
-                            print(f"rclone error: {stderr_text}")
-                            raise HTTPException(
-                                status_code=500,
-                                detail=f"Failed to upload to B2: {stderr_text}"
-                            )
-                        
-                        stdout_text = (await process.stdout.read()).decode()
-                        print(f"rclone output: {stdout_text}")
+                        print("B2 upload completed successfully")
                         
                         # Generate download URL
-                        file_url = f"https://f003.backblazeb2.com/file/{B2_BUCKET_NAME}/{file_path}"
+                        file_url = uploaded_file.get_download_url()
                         print(f"File uploaded successfully: {file_url}")
                         
                         return {
