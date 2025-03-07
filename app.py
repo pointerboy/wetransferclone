@@ -1241,120 +1241,113 @@ memory_buffer_size = 50M
                         
                         print("File read complete, starting rclone upload...")
                         
-                        try:
-                            # Use rclone to copy the file to B2 with optimized settings
-                            print("Starting rclone process...")
-                            process = await asyncio.create_subprocess_exec(
-                                rclone_path,
-                                "--config", rclone_config,
-                                "--progress",
-                                "--stats", "1s",
-                                "--stats-one-line",
-                                "--transfers", "4",  # Reduced for memory efficiency
-                                "--checkers", "8",    # Reduced for memory efficiency
-                                "--buffer-size", "50M",
-                                "--contimeout", "60s",
-                                "--timeout", "300s",
-                                "--retries", "3",
-                                "--retries-sleep", "5s",
-                                "copy",
-                                temp_file_path,
-                                f"b2:{B2_BUCKET_NAME}/{file_path}",
-                                stdout=asyncio.subprocess.PIPE,
-                                stderr=asyncio.subprocess.PIPE
-                            )
-                        except Exception as e:
-                            print(f"Error starting rclone process: {str(e)}")
-                            raise HTTPException(
-                                status_code=500,
-                                detail=f"Failed to start upload process: {str(e)}"
-                            )
-                            
-                            # Monitor rclone progress in real-time
-                            async def monitor_progress():
-                                try:
-                                    while True:
-                                        line = await asyncio.wait_for(process.stdout.readline(), timeout=5.0)
-                                        if not line:
-                                            break
-                                        line = line.decode().strip()
-                                        if line:
-                                            print(f"rclone progress: {line}")
-                                        
-                                        # Check for errors in stderr
-                                        try:
-                                            error_line = await asyncio.wait_for(process.stderr.readline(), timeout=0.1)
-                                            if error_line:
-                                                error_text = error_line.decode().strip()
-                                                if error_text:
-                                                    print(f"rclone error: {error_text}")
-                                                    raise Exception(f"rclone error: {error_text}")
-                                        except asyncio.TimeoutError:
-                                            continue
-                                except asyncio.TimeoutError:
-                                    print("Progress monitoring timeout - process might be stuck")
-                                    process.kill()
-                                    raise Exception("Upload process timed out - no progress updates received")
-                            
-                            # Start progress monitoring
-                            progress_task = asyncio.create_task(monitor_progress())
-                            
-                            # Wait for the process with timeout
+                        # Use rclone to copy the file to B2 with optimized settings
+                        print("Starting rclone process...")
+                        process = await asyncio.create_subprocess_exec(
+                            rclone_path,
+                            "--config", rclone_config,
+                            "--progress",
+                            "--stats", "1s",
+                            "--stats-one-line",
+                            "--transfers", "4",  # Reduced for memory efficiency
+                            "--checkers", "8",    # Reduced for memory efficiency
+                            "--buffer-size", "50M",
+                            "--contimeout", "60s",
+                            "--timeout", "300s",
+                            "--retries", "3",
+                            "--retries-sleep", "5s",
+                            "copy",
+                            temp_file_path,
+                            f"b2:{B2_BUCKET_NAME}/{file_path}",
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE
+                        )
+                        
+                        # Monitor rclone progress in real-time
+                        async def monitor_progress():
                             try:
-                                await asyncio.wait_for(process.wait(), timeout=600.0)  # 10 minute timeout
-                                await progress_task
-                                print("rclone process completed")
+                                while True:
+                                    line = await asyncio.wait_for(process.stdout.readline(), timeout=5.0)
+                                    if not line:
+                                        break
+                                    line = line.decode().strip()
+                                    if line:
+                                        print(f"rclone progress: {line}")
+                                    
+                                    # Check for errors in stderr
+                                    try:
+                                        error_line = await asyncio.wait_for(process.stderr.readline(), timeout=0.1)
+                                        if error_line:
+                                            error_text = error_line.decode().strip()
+                                            if error_text:
+                                                print(f"rclone error: {error_text}")
+                                                raise Exception(f"rclone error: {error_text}")
+                                    except asyncio.TimeoutError:
+                                        continue
                             except asyncio.TimeoutError:
-                                print("rclone process timed out")
+                                print("Progress monitoring timeout - process might be stuck")
                                 process.kill()
-                                raise HTTPException(
-                                    status_code=408,
-                                    detail="Upload timeout - process took too long"
-                                )
-                            except Exception as e:
-                                print(f"Error during rclone process: {str(e)}")
-                                process.kill()
-                                raise HTTPException(
-                                    status_code=500,
-                                    detail=f"Failed to upload to B2: {str(e)}"
-                                )
-                            
-                            if process.returncode != 0:
-                                stderr_text = (await process.stderr.read()).decode()
-                                print(f"rclone error: {stderr_text}")
-                                raise HTTPException(
-                                    status_code=500,
-                                    detail=f"Failed to upload to B2: {stderr_text}"
-                                )
-                            
-                            stdout_text = (await process.stdout.read()).decode()
-                            print(f"rclone output: {stdout_text}")
-                            
-                            # Generate download URL
-                            file_url = f"https://f003.backblazeb2.com/file/{B2_BUCKET_NAME}/{file_path}"
-                            print(f"File uploaded successfully: {file_url}")
-                            
-                            return {
-                                "url": file_url,
-                                "filename": safe_filename,
-                                "file_path": file_path,
-                                "size": total_size,
-                                "content_type": content_type
-                            }
-                            
+                                raise Exception("Upload process timed out - no progress updates received")
+                        
+                        # Start progress monitoring
+                        progress_task = asyncio.create_task(monitor_progress())
+                        
+                        # Wait for the process with timeout
+                        try:
+                            await asyncio.wait_for(process.wait(), timeout=600.0)  # 10 minute timeout
+                            await progress_task
+                            print("rclone process completed")
+                        except asyncio.TimeoutError:
+                            print("rclone process timed out")
+                            process.kill()
+                            raise HTTPException(
+                                status_code=408,
+                                detail="Upload timeout - process took too long"
+                            )
                         except Exception as e:
-                            print(f"rclone error: {str(e)}")
+                            print(f"Error during rclone process: {str(e)}")
+                            process.kill()
                             raise HTTPException(
                                 status_code=500,
                                 detail=f"Failed to upload to B2: {str(e)}"
                             )
-                        finally:
-                            # Clean up temporary file
-                            try:
-                                os.unlink(temp_file_path)
-                                print("Temporary file cleaned up")
-                            except Exception as e:
-                                print(f"Error cleaning up temporary file: {str(e)}")
+                        
+                        if process.returncode != 0:
+                            stderr_text = (await process.stderr.read()).decode()
+                            print(f"rclone error: {stderr_text}")
+                            raise HTTPException(
+                                status_code=500,
+                                detail=f"Failed to upload to B2: {stderr_text}"
+                            )
+                        
+                        stdout_text = (await process.stdout.read()).decode()
+                        print(f"rclone output: {stdout_text}")
+                        
+                        # Generate download URL
+                        file_url = f"https://f003.backblazeb2.com/file/{B2_BUCKET_NAME}/{file_path}"
+                        print(f"File uploaded successfully: {file_url}")
+                        
+                        return {
+                            "url": file_url,
+                            "filename": safe_filename,
+                            "file_path": file_path,
+                            "size": total_size,
+                            "content_type": content_type
+                        }
+                        
+                    except Exception as e:
+                        print(f"Error processing file {file.filename}: {str(e)}")
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Error processing file {file.filename}: {str(e)}"
+                        )
+                    finally:
+                        # Clean up temporary file
+                        try:
+                            os.unlink(temp_file_path)
+                            print("Temporary file cleaned up")
+                        except Exception as e:
+                            print(f"Error cleaning up temporary file: {str(e)}")
                 except Exception as e:
                     print(f"Error processing file {file.filename}: {str(e)}")
                     raise HTTPException(
