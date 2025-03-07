@@ -22,8 +22,8 @@ STORAGE_BASE_DIR = "/mnt/disk"  # Base directory for all storage operations
 TEMP_UPLOAD_DIR = os.path.join(STORAGE_BASE_DIR, "temp_uploads")  # Temporary upload directory
 TOOLS_DIR = os.path.join(STORAGE_BASE_DIR, "tools")  # Tools directory
 MAX_TEMP_STORAGE = 90 * 1024 * 1024 * 1024  # 90GB max temp storage (leaving some buffer for system)
-CHUNK_SIZE = 2 * 1024 * 1024  # 2MB chunks for file operations (reduced for better memory management)
-MAX_CONCURRENT_UPLOADS = 4  # Limit concurrent uploads to prevent memory issues
+CHUNK_SIZE = 8 * 1024 * 1024  # 8MB chunks for faster file operations
+MAX_CONCURRENT_UPLOADS = 8  # Increased concurrent uploads for better throughput
 CACHE_EXPIRY = 24 * 60 * 60  # 24 hours cache expiry
 
 # Ensure directories exist with proper permissions
@@ -1174,14 +1174,14 @@ type = b2
 account = {B2_APPLICATION_KEY_ID}
 key = {B2_APPLICATION_KEY}
 hard_delete = true
-upload_cutoff = 100M
-chunk_size = 50M
-max_upload_parts = 50
-max_upload_concurrency = 4
+upload_cutoff = 200M
+chunk_size = 100M
+max_upload_parts = 100
+max_upload_concurrency = 8
 max_upload_speed = 0
 max_download_speed = 0
-buffer_size = 50M
-memory_buffer_size = 50M
+buffer_size = 200M
+memory_buffer_size = 200M
 """)
 
         files_data = []
@@ -1212,8 +1212,8 @@ memory_buffer_size = 50M
                         last_progress_time = time.time()
                         last_progress_size = 0
                         
-                        # Open file in binary write mode
-                        with open(temp_file_path, 'wb') as temp_file:
+                        # Open file in binary write mode with buffering
+                        with open(temp_file_path, 'wb', buffering=8*1024*1024) as temp_file:
                             while True:
                                 try:
                                     chunk = await asyncio.wait_for(file.read(CHUNK_SIZE), timeout=30.0)
@@ -1249,13 +1249,15 @@ memory_buffer_size = 50M
                             "--progress",
                             "--stats", "1s",
                             "--stats-one-line",
-                            "--transfers", "4",  # Reduced for memory efficiency
-                            "--checkers", "8",    # Reduced for memory efficiency
-                            "--buffer-size", "50M",
+                            "--transfers", "8",  # Increased for better throughput
+                            "--checkers", "16",   # Increased for faster verification
+                            "--buffer-size", "200M",
                             "--contimeout", "60s",
                             "--timeout", "300s",
                             "--retries", "3",
                             "--retries-sleep", "5s",
+                            "--fast-list",  # Enable fast list mode
+                            "--drive-acknowledge-abuse",  # Skip file size checks
                             "copy",
                             temp_file_path,
                             f"b2:{B2_BUCKET_NAME}/{file_path}",
