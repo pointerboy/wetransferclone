@@ -1,5 +1,8 @@
-fastapi
-uvicorn
-b2sdk
-python-multipart
-jinja2
+fastapi==0.104.1
+uvicorn==0.24.0
+jinja2==3.1.2
+b2sdk==1.24.0
+httpx==0.25.1
+psutil==5.9.6
+python-multipart==0.0.6
+setuptools==69.0.3
