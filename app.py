@@ -70,12 +70,12 @@ def get_temp_storage_usage():
     """Get current usage of temporary storage"""
     total_size = 0
     try:
-        for dirpath, dirnames, filenames in os.walk(TEMP_UPLOAD_DIR):
-            for f in filenames:
-                fp = os.path.join(dirpath, f)
+    for dirpath, dirnames, filenames in os.walk(TEMP_UPLOAD_DIR):
+        for f in filenames:
+            fp = os.path.join(dirpath, f)
                 if os.path.exists(fp):  # Check if file still exists
                     try:
-                        total_size += os.path.getsize(fp)
+            total_size += os.path.getsize(fp)
                     except OSError:
                         continue
     except Exception as e:
@@ -135,7 +135,7 @@ def cleanup_temp_storage():
         # Clean up if temp storage exceeds limit OR overall storage is >95% full
         if current_usage > MAX_TEMP_STORAGE or storage_percent > 95:
             print(f"Storage cleanup needed: Temp usage: {current_usage / (1024**3):.2f}GB, Storage used: {storage_percent}%")
-            current_time = time.time()
+        current_time = time.time()
             
             # If storage is very tight (>98%), be more aggressive with cleanup
             aggressive_cleanup = storage_percent > 98
@@ -143,9 +143,9 @@ def cleanup_temp_storage():
             
             # Sort files by age and size
             files_to_clean = []
-            for dirpath, dirnames, filenames in os.walk(TEMP_UPLOAD_DIR):
-                for f in filenames:
-                    fp = os.path.join(dirpath, f)
+        for dirpath, dirnames, filenames in os.walk(TEMP_UPLOAD_DIR):
+            for f in filenames:
+                fp = os.path.join(dirpath, f)
                     try:
                         if os.path.exists(fp):
                             stat = os.stat(fp)
@@ -171,7 +171,7 @@ def cleanup_temp_storage():
                         current_usage -= file_info['size']
                         if current_usage <= MAX_TEMP_STORAGE * 0.8 and storage_percent <= 90:
                             break
-                except Exception as e:
+                    except Exception as e:
                     print(f"Error deleting temporary file {file_info['path']}: {str(e)}")
                         
             # After cleanup, check if we need to alert about storage issues
@@ -202,7 +202,7 @@ def ensure_rclone():
     if os.path.exists(rclone_exe):
         print(f"Found local rclone at: {rclone_exe}")
         return rclone_exe
-
+    
     print("Downloading rclone...")
     
     try:
@@ -227,17 +227,17 @@ def ensure_rclone():
             zip_path = os.path.join(temp_dir, "rclone.zip")
             
             # Download with progress tracking
-            with httpx.Client() as client:
+        with httpx.Client() as client:
                 with client.stream('GET', download_url) as response:
-                    response.raise_for_status()
+            response.raise_for_status()
                     total = int(response.headers.get('content-length', 0))
-                    
-                    with open(zip_path, 'wb') as f:
+            
+            with open(zip_path, 'wb') as f:
                         for chunk in response.iter_bytes():
                             f.write(chunk)
-            
+        
             # Extract and setup
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(temp_dir)
             
             # Find extracted directory
@@ -246,23 +246,23 @@ def ensure_rclone():
                  if d.startswith("rclone-") and os.path.isdir(os.path.join(temp_dir, d))),
                 None
             )
-            
-            if not extracted_dir:
-                raise Exception("Could not find extracted rclone directory")
-            
+        
+        if not extracted_dir:
+            raise Exception("Could not find extracted rclone directory")
+        
             # Ensure tools directory exists
             os.makedirs(rclone_dir, exist_ok=True)
             
             # Move executable to final location
             src_exe = os.path.join(temp_dir, extracted_dir, 
                                  "rclone.exe" if system == "windows" else "rclone")
-            
-            shutil.copy2(src_exe, rclone_exe)
-            
+        
+        shutil.copy2(src_exe, rclone_exe)
+        
             # Set executable permissions on Unix-like systems
-            if system != "windows":
-                os.chmod(rclone_exe, 0o755)
-            
+        if system != "windows":
+            os.chmod(rclone_exe, 0o755)
+        
             print(f"Rclone installed successfully at: {rclone_exe}")
             
             # Verify installation
@@ -276,8 +276,8 @@ def ensure_rclone():
             except Exception as e:
                 print(f"Warning: Could not verify rclone installation: {str(e)}")
             
-            return rclone_exe
-            
+        return rclone_exe
+        
     except Exception as e:
         error_msg = f"Failed to download/setup rclone: {str(e)}"
         print(error_msg)
@@ -602,7 +602,7 @@ async def upload_file(files: list[UploadFile] = File(...)):
                         
                         if not upload_success:
                             raise Exception("Failed to upload file to B2")
-                            
+                        
                         # Generate download URL
                         file_url = f"{B2_ENDPOINT}/{file_path}"
                         print(f"File uploaded successfully: {file_url}")
@@ -625,8 +625,8 @@ async def upload_file(files: list[UploadFile] = File(...)):
                         # Clean up temporary file
                         try:
                             if os.path.exists(temp_file_path):
-                                os.unlink(temp_file_path)
-                                print("Temporary file cleaned up")
+                            os.unlink(temp_file_path)
+                            print("Temporary file cleaned up")
                         except Exception as e:
                             print(f"Error cleaning up temporary file: {str(e)}")
                 except Exception as e:
@@ -670,8 +670,8 @@ async def upload_file(files: list[UploadFile] = File(...)):
         # Clean up config file
         try:
             if os.path.exists(rclone_config):
-                os.remove(rclone_config)
-                print("Rclone config file cleaned up")
+            os.remove(rclone_config)
+            print("Rclone config file cleaned up")
         except Exception as e:
             print(f"Error cleaning up rclone config: {str(e)}")
 
@@ -723,16 +723,16 @@ async def file_page(request: Request, file_id: str, background_tasks: Background
         "year": datetime.datetime.now().year
     })
 
-def format_size(size_in_bytes):
-    if size_in_bytes == 0:
-        return '0 Bytes'
-    k = 1024
-    sizes = ['Bytes', 'KB', 'MB', 'GB']
-    i = int(math.log(size_in_bytes) / math.log(k))
-    return f"{size_in_bytes / math.pow(k, i):.2f} {sizes[i]}"
-
-def format_date(timestamp):
-    return datetime.datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M')
+    def format_size(size_in_bytes):
+        if size_in_bytes == 0:
+            return '0 Bytes'
+        k = 1024
+        sizes = ['Bytes', 'KB', 'MB', 'GB']
+        i = int(math.log(size_in_bytes) / math.log(k))
+        return f"{size_in_bytes / math.pow(k, i):.2f} {sizes[i]}"
+    
+    def format_date(timestamp):
+        return datetime.datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M')
 
 @app.get("/download/{file_id}/{filename}")
 async def download_file(file_id: str, filename: str, background_tasks: BackgroundTasks):
@@ -780,7 +780,7 @@ async def download_file(file_id: str, filename: str, background_tasks: Backgroun
                     chunk = await process.stdout.read(CHUNK_SIZE)
                     if not chunk:
                         break
-                    yield chunk
+                        yield chunk
                     
                 await process.wait()
                 if process.returncode != 0:

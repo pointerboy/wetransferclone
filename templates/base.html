@@ -10,12 +10,17 @@
 </head>
 <body>
     <div class="split-layout">
+        <div class="upload-section">
+            {% block content %}{% endblock %}
+        </div>
+        
         <div class="background-section">
+            {% for image in background_images %}
+            <img src="{{ image.url }}" class="background-image {% if loop.first %}active{% endif %}" alt="Background">
+            {% endfor %}
             <div class="background-overlay"></div>
             <div class="background-credit"></div>
         </div>
-        
-        {% block content %}{% endblock %}
     </div>
     
     <div class="copyright">© {{ year }} Luka Trbović. Sva prava zadržana.</div>

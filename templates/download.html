@@ -4,10 +4,26 @@
 
 {% block content %}
 <div class="container">
-    <h1>Vaši Fajlovi Su Spremni</h1>
+    <h2>Vaši fajlovi su spremni</h2>
+    
+    <div class="download-info">
+        <div class="info-item">
+            <span class="info-label">Datum otpremanja:</span>
+            <span class="info-value">{{ upload_date }}</span>
+        </div>
+        <div class="info-item">
+            <span class="info-label">Ističe:</span>
+            <span class="info-value">{{ expiry_date }}</span>
+        </div>
+        <div class="info-item">
+            <span class="info-label">Preostalo vreme:</span>
+            <span class="info-value">{{ days_left }} dan{{ "a" if days_left != 1 else "" }}</span>
+        </div>
+    </div>
     
     <a href="#" id="downloadAllButton" class="download-all-button">
-        Preuzmi Sve Fajlove
+        <span class="button-icon">⬇️</span>
+        <span class="button-text">Preuzmi sve fajlove</span>
     </a>
     
     <div id="downloadProgress" class="download-progress">
@@ -20,23 +36,22 @@
     <div class="files-list">
         {% for file in files %}
         <div class="file-item">
-            <div class="file-name">{{ file.filename }}</div>
-            <div class="file-meta">
-                <span>Veličina: {{ file.size_formatted }}</span>
+            <div class="file-info">
+                <div class="file-name">{{ file.filename }}</div>
+                <div class="file-size">{{ file.size_formatted }}</div>
             </div>
-            <a href="{{ file.download_url }}" class="download-button">Preuzmi {{ file.filename }}</a>
+            <a href="{{ file.download_url }}" class="download-button">
+                <span class="button-icon">⬇️</span>
+                <span class="button-text">Preuzmi</span>
+            </a>
         </div>
         {% endfor %}
     </div>
     
-    <div class="upload-info">
-        <div>Uploadovano: {{ upload_date }}</div>
-        <div>Ističe: {{ expiry_date }}</div>
-    </div>
-    
-    <p class="expire-notice">Ovi fajlovi će istući za {{ days_left }} dan{{ "a" if days_left != 1 else "" }}</p>
-    
-    <a href="/" class="back-link">Uploaduj još fajlova</a>
+    <a href="/" class="back-link">
+        <span class="button-icon">⬅️</span>
+        <span class="button-text">Otpremi još fajlova</span>
+    </a>
 </div>
 {% endblock %}
 

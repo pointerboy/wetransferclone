@@ -31,6 +31,8 @@ class FileUploader {
         this.uploadStartTime = null;
         this.lastUploadedBytes = 0;
         this.lastSpeedUpdateTime = null;
+        this.totalProgress = 0;
+        this.uploadPhase = 'preparing'; // preparing, uploading, transferring, complete
         
         this.initializeElements();
         this.setupEventListeners();
@@ -49,7 +51,12 @@ class FileUploader {
         this.linkContainer = document.getElementById("linkContainer");
         this.copyButton = document.getElementById("copyButton");
         this.linkUrl = document.getElementById("linkUrl");
-        this.copiedNotification = document.getElementById("copiedNotification");
+        
+        // Create notification element
+        this.notification = document.createElement('div');
+        this.notification.className = 'copied-notification';
+        this.notification.textContent = 'Link kopiran!';
+        document.body.appendChild(this.notification);
     }
     
     setupEventListeners() {
@@ -171,16 +178,49 @@ class FileUploader {
         this.lastSpeedUpdateTime = null;
     }
     
+    updateProgress(percent, phase) {
+        this.uploadPhase = phase;
+        this.totalProgress = percent;
+        
+        if (this.progressFill) {
+            this.progressFill.style.width = `${percent}%`;
+        }
+        
+        if (this.percentText) {
+            this.percentText.textContent = `${Math.round(percent)}%`;
+        }
+        
+        if (this.statusText) {
+            let statusMessage = '';
+            switch (phase) {
+                case 'preparing':
+                    statusMessage = 'Pripremam fajlove...';
+                    break;
+                case 'uploading':
+                    statusMessage = 'Otpremam fajlove...';
+                    break;
+                case 'transferring':
+                    statusMessage = 'Prebacujem na server...';
+                    break;
+                case 'complete':
+                    statusMessage = 'Otpremanje završeno!';
+                    break;
+            }
+            this.statusText.textContent = statusMessage;
+        }
+    }
+    
     async uploadFiles() {
         if (this.selectedFiles.length === 0) {
             if (this.statusText) {
-                this.statusText.innerText = "Molimo izaberite fajlove za upload";
+                this.statusText.textContent = "Molimo izaberite fajlove za otpremanje";
                 this.statusText.style.color = "#ff3b30";
             }
             return;
         }
 
         this.resetUploadUI();
+        this.updateProgress(0, 'preparing');
 
         const formData = new FormData();
         this.selectedFiles.forEach(file => {
@@ -188,61 +228,67 @@ class FileUploader {
         });
 
         try {
-            const response = await fetch("/upload", {
-                method: "POST",
-                body: formData,
-                onUploadProgress: this.handleProgress.bind(this)
-            });
+            const xhr = new XMLHttpRequest();
+            xhr.upload.onprogress = (event) => {
+                if (event.lengthComputable) {
+                    // Upload progress is 80% of total progress
+                    const uploadPercent = (event.loaded / event.total) * 80;
+                    this.updateProgress(uploadPercent, 'uploading');
+                    this.updateSpeed(event);
+                }
+            };
 
-            if (response.ok) {
-                const data = await response.json();
-                this.handleUploadSuccess(data);
-            } else {
-                const errorData = await response.json();
-                this.handleUploadError(errorData.detail || "Upload failed");
-            }
+            xhr.onreadystatechange = () => {
+                if (xhr.readyState === 3) {
+                    // Transfer to B2 is remaining 20%
+                    this.updateProgress(90, 'transferring');
+                }
+                if (xhr.readyState === 4) {
+                    if (xhr.status === 200) {
+                        const response = JSON.parse(xhr.responseText);
+                        this.handleUploadSuccess(response);
+                    } else {
+                        this.handleUploadError(xhr.responseText);
+                    }
+                }
+            };
+
+            xhr.open('POST', '/upload', true);
+            xhr.send(formData);
         } catch (error) {
             this.handleUploadError(error.message);
         }
     }
     
-    handleProgress(event) {
-        if (event.lengthComputable) {
-            const percent = Math.round((event.loaded / event.total) * 100);
-            if (this.progressFill) {
-                this.progressFill.style.width = `${percent}%`;
-            }
-            if (this.percentText) {
-                this.percentText.textContent = `${percent}%`;
+    updateSpeed(event) {
+        const now = Date.now();
+        if (!this.uploadStartTime) {
+            this.uploadStartTime = now;
+            this.lastSpeedUpdateTime = now;
+            this.lastUploadedBytes = 0;
+        }
+        
+        const timeDiff = (now - this.lastSpeedUpdateTime) / 1000;
+        if (timeDiff >= 1) {
+            const bytesDiff = event.loaded - this.lastUploadedBytes;
+            const speed = bytesDiff / timeDiff;
+            const remainingBytes = event.total - event.loaded;
+            const eta = remainingBytes / speed;
+            
+            if (this.uploadSpeed) {
+                this.uploadSpeed.textContent = `${formatSpeed(speed)} • ${formatTime(eta)} preostalo`;
             }
             
-            const now = Date.now();
-            if (!this.uploadStartTime) {
-                this.uploadStartTime = now;
-                this.lastSpeedUpdateTime = now;
-                this.lastUploadedBytes = 0;
-            }
-            
-            const timeDiff = (now - this.lastSpeedUpdateTime) / 1000;
-            if (timeDiff >= 1) {
-                const bytesDiff = event.loaded - this.lastUploadedBytes;
-                const speed = bytesDiff / timeDiff;
-                const remainingBytes = event.total - event.loaded;
-                const eta = remainingBytes / speed;
-                
-                if (this.uploadSpeed) {
-                    this.uploadSpeed.textContent = `${formatSpeed(speed)} • ${formatTime(eta)} preostalo`;
-                }
-                
-                this.lastUploadedBytes = event.loaded;
-                this.lastSpeedUpdateTime = now;
-            }
+            this.lastUploadedBytes = event.loaded;
+            this.lastSpeedUpdateTime = now;
         }
     }
     
     handleUploadSuccess(response) {
+        this.updateProgress(100, 'complete');
+        
         if (this.statusText) {
-            this.statusText.innerText = "Upload uspešan!";
+            this.statusText.textContent = "Otpremanje uspešno!";
             this.statusText.style.color = "#34c759";
             this.statusText.classList.add('success');
         }
@@ -257,26 +303,12 @@ class FileUploader {
         }
         
         // Reset form
-        if (this.fileInput) {
-            this.fileInput.value = "";
-        }
-        this.selectedFiles = [];
-        if (this.filesList) {
-            this.filesList.innerHTML = "";
-            this.filesList.style.display = "none";
-        }
-        
-        if (this.loaderContainer) {
-            this.loaderContainer.style.display = "none";
-        }
-        if (this.uploadButton) {
-            this.uploadButton.disabled = false;
-        }
+        this.resetForm();
     }
     
     handleUploadError(error) {
         if (this.statusText) {
-            this.statusText.innerText = `Greška: ${error}`;
+            this.statusText.textContent = `Greška: ${error}`;
             this.statusText.style.color = "#ff3b30";
         }
         if (this.loaderContainer) {
@@ -287,14 +319,47 @@ class FileUploader {
         }
     }
     
+    resetForm() {
+        if (this.fileInput) {
+            this.fileInput.value = "";
+        }
+        this.selectedFiles = [];
+        if (this.filesList) {
+            this.filesList.innerHTML = "";
+            this.filesList.style.display = "none";
+        }
+        
+        if (this.uploadButton) {
+            this.uploadButton.disabled = false;
+        }
+    }
+    
     copyLinkToClipboard() {
-        if (this.linkUrl && this.copiedNotification) {
+        if (this.linkUrl) {
             navigator.clipboard.writeText(this.linkUrl.textContent)
                 .then(() => {
-                    this.copiedNotification.classList.add('show-copied');
+                    this.notification.classList.add('show');
                     setTimeout(() => {
-                        this.copiedNotification.classList.remove('show-copied');
+                        this.notification.classList.remove('show');
                     }, 2000);
+                })
+                .catch(err => {
+                    console.error('Failed to copy:', err);
+                    // Fallback for older browsers
+                    const textArea = document.createElement('textarea');
+                    textArea.value = this.linkUrl.textContent;
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    try {
+                        document.execCommand('copy');
+                        this.notification.classList.add('show');
+                        setTimeout(() => {
+                            this.notification.classList.remove('show');
+                        }, 2000);
+                    } catch (err) {
+                        console.error('Fallback failed:', err);
+                    }
+                    document.body.removeChild(textArea);
                 });
         }
     }
