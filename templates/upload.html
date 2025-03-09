@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block title %}Transfer Fajlova{% endblock %}
+
+{% block content %}
+<div class="upload-section">
+    <div class="container">
+        <h2>Podelite svoje fajlove<br>sa bilo kim, bilo gde</h2>
+        
+        <div id="uploadArea" class="upload-area">
+            <div class="upload-icon">📁</div>
+            <p class="upload-text">Prevucite fajlove ovde<br>ili kliknite za pretragu</p>
+        </div>
+        
+        <input type="file" id="fileInput" multiple> 
+        <div id="filesList" class="files-list"></div>
+        
+        <button id="uploadButton" class="upload-btn" disabled>Upload</button>
+        
+        <div id="loaderContainer" class="loader-container">
+            <div class="progress-info">
+                <div id="percentText" class="percent">0%</div>
+                <div id="uploadSpeed" class="upload-speed">Računam...</div>
+            </div>
+            <div class="progress-bar">
+                <div id="progressFill" class="progress-fill"></div>
+            </div>
+        </div>
+        
+        <p id="status" class="status"></p>
+        
+        <div id="linkContainer" class="link-container">
+            <p class="link-text">Vaši fajlovi su spremni! Evo vašeg linka:</p>
+            <p id="linkUrl" class="link-url"></p>
+            <button id="copyButton" class="copy-button">📋</button>
+            <p class="expire-notice">Ovi fajlovi će biti dostupni {{ expiry_days }} dana</p>
+        </div>
+    </div>
+</div>
+
+<div id="copiedNotification" class="copied">Link kopiran u clipboard!</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', path='js/upload.js') }}"></script>
+{% endblock %} 

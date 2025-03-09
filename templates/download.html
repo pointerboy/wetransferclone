@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block title %}Preuzmi Fajlove{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1>Vaši Fajlovi Su Spremni</h1>
+    
+    <a href="#" id="downloadAllButton" class="download-all-button">
+        Preuzmi Sve Fajlove
+    </a>
+    
+    <div id="downloadProgress" class="download-progress">
+        <div class="progress-bar">
+            <div id="progressFill" class="progress-fill"></div>
+        </div>
+        <div id="progressText" class="progress-text">Pripremam preuzimanje...</div>
+    </div>
+    
+    <div class="files-list">
+        {% for file in files %}
+        <div class="file-item">
+            <div class="file-name">{{ file.filename }}</div>
+            <div class="file-meta">
+                <span>Veličina: {{ file.size_formatted }}</span>
+            </div>
+            <a href="{{ file.download_url }}" class="download-button">Preuzmi {{ file.filename }}</a>
+        </div>
+        {% endfor %}
+    </div>
+    
+    <div class="upload-info">
+        <div>Uploadovano: {{ upload_date }}</div>
+        <div>Ističe: {{ expiry_date }}</div>
+    </div>
+    
+    <p class="expire-notice">Ovi fajlovi će istući za {{ days_left }} dan{{ "a" if days_left != 1 else "" }}</p>
+    
+    <a href="/" class="back-link">Uploaduj još fajlova</a>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    window.downloadFiles = {{ files|tojson|safe }};
+</script>
+<script src="{{ url_for('static', path='js/download.js') }}"></script>
+{% endblock %} 
