@@ -181,19 +181,20 @@ def cleanup_temp_storage():
     except Exception as e:
         print(f"Error during temp storage cleanup: {str(e)}")
 
+
 def ensure_rclone():
     """Ensure rclone is available with optimized configuration"""
     # First try to find rclone in system PATH
     try:
         result = subprocess.run(['which' if platform.system() != 'Windows' else 'where', 'rclone'], 
-                              capture_output=True, text=True)
+                                capture_output=True, text=True)
         if result.returncode == 0:
             rclone_path = result.stdout.strip()
             print(f"Found system rclone at: {rclone_path}")
             return rclone_path
     except Exception as e:
         print(f"System rclone not found: {str(e)}")
-
+    
     # If not in PATH, check our tools directory
     rclone_dir = TOOLS_DIR
     system = platform.system().lower()
@@ -219,7 +220,7 @@ def ensure_rclone():
 
         if not download_url:
             raise Exception(f"Unsupported system: {system} {arch}")
-
+        
         print(f"Downloading rclone from: {download_url}")
         
         # Create temporary directory for download
@@ -227,17 +228,15 @@ def ensure_rclone():
             zip_path = os.path.join(temp_dir, "rclone.zip")
             
             # Download with progress tracking
-        with httpx.Client() as client:
+            with httpx.Client() as client:
                 with client.stream('GET', download_url) as response:
-            response.raise_for_status()
-                    total = int(response.headers.get('content-length', 0))
-            
-            with open(zip_path, 'wb') as f:
+                    response.raise_for_status()
+                    with open(zip_path, 'wb') as f:
                         for chunk in response.iter_bytes():
                             f.write(chunk)
-        
+            
             # Extract and setup
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(temp_dir)
             
             # Find extracted directory
@@ -246,29 +245,27 @@ def ensure_rclone():
                  if d.startswith("rclone-") and os.path.isdir(os.path.join(temp_dir, d))),
                 None
             )
-        
-        if not extracted_dir:
-            raise Exception("Could not find extracted rclone directory")
-        
+            
+            if not extracted_dir:
+                raise Exception("Could not find extracted rclone directory")
+            
             # Ensure tools directory exists
             os.makedirs(rclone_dir, exist_ok=True)
             
             # Move executable to final location
-            src_exe = os.path.join(temp_dir, extracted_dir, 
-                                 "rclone.exe" if system == "windows" else "rclone")
-        
-        shutil.copy2(src_exe, rclone_exe)
-        
+            src_exe = os.path.join(temp_dir, extracted_dir, "rclone.exe" if system == "windows" else "rclone")
+            shutil.copy2(src_exe, rclone_exe)
+            
             # Set executable permissions on Unix-like systems
-        if system != "windows":
-            os.chmod(rclone_exe, 0o755)
-        
+            if system != "windows":
+                os.chmod(rclone_exe, 0o755)
+            
             print(f"Rclone installed successfully at: {rclone_exe}")
             
             # Verify installation
             try:
                 result = subprocess.run([rclone_exe, "--version"], 
-                                     capture_output=True, text=True)
+                                        capture_output=True, text=True)
                 if result.returncode == 0:
                     print(f"Rclone version: {result.stdout.split('\n')[0]}")
                 else:
@@ -276,12 +273,13 @@ def ensure_rclone():
             except Exception as e:
                 print(f"Warning: Could not verify rclone installation: {str(e)}")
             
-        return rclone_exe
-        
+            return rclone_exe
+    
     except Exception as e:
         error_msg = f"Failed to download/setup rclone: {str(e)}"
         print(error_msg)
         raise Exception(error_msg)
+
 
 # Create optimized rclone configuration
 def create_rclone_config():
