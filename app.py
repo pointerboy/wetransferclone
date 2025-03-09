@@ -70,12 +70,12 @@ def get_temp_storage_usage():
     """Get current usage of temporary storage"""
     total_size = 0
     try:
-    for dirpath, dirnames, filenames in os.walk(TEMP_UPLOAD_DIR):
-        for f in filenames:
-            fp = os.path.join(dirpath, f)
+        for dirpath, dirnames, filenames in os.walk(TEMP_UPLOAD_DIR):
+            for f in filenames:
+                fp = os.path.join(dirpath, f)
                 if os.path.exists(fp):  # Check if file still exists
                     try:
-            total_size += os.path.getsize(fp)
+                        total_size += os.path.getsize(fp)
                     except OSError:
                         continue
     except Exception as e:
