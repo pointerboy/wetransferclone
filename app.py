@@ -450,6 +450,53 @@ def validate_b2_filename(filename: str) -> bool:
     except Exception as e:
         raise ValueError(f"Invalid filename: {str(e)}")
 
+async def upload_to_b2(local_file_path: str, b2_file_path: str, rclone_path: str, rclone_config: str) -> bool:
+    """
+    Upload a file to B2 using rclone
+    
+    Args:
+        local_file_path: Path to the local file
+        b2_file_path: Path where the file should be stored in B2
+        rclone_path: Path to the rclone executable
+        rclone_config: Path to the rclone config file
+    
+    Returns:
+        bool: True if upload was successful, False otherwise
+    """
+    try:
+        print(f"Starting B2 upload for {b2_file_path}")
+        
+        # Create rclone upload process
+        process = await asyncio.create_subprocess_exec(
+            rclone_path,
+            "--config", rclone_config,
+            "copyto",
+            "--progress",
+            "--stats-one-line",
+            "--stats", "1s",
+            "--retries", "3",
+            "--low-level-retries", "10",
+            "--transfers", str(MAX_CONCURRENT_UPLOADS),
+            local_file_path,
+            f"b2:{B2_BUCKET_NAME}/{b2_file_path}",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        
+        # Wait for the upload to complete
+        stdout, stderr = await process.communicate()
+        
+        if process.returncode != 0:
+            print(f"Rclone upload failed with error: {stderr.decode()}")
+            return False
+            
+        print(f"B2 upload completed successfully for {b2_file_path}")
+        return True
+        
+    except Exception as e:
+        print(f"Error during B2 upload: {str(e)}")
+        return False
+
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
