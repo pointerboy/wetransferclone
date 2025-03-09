@@ -1,44 +1,63 @@
 {% extends "base.html" %}
 
-{% block title %}Transfer Fajlova{% endblock %}
+{% block title %}Podeli Fajlove{% endblock %}
 
 {% block content %}
-<div class="upload-section">
-    <div class="container">
-        <h2>Podelite svoje fajlove<br>sa bilo kim, bilo gde</h2>
-        
-        <div id="uploadArea" class="upload-area">
-            <div class="upload-icon">📁</div>
-            <p class="upload-text">Prevucite fajlove ovde<br>ili kliknite za pretragu</p>
+<div class="upload-container">
+    <h1>Podeli svoje fajlove</h1>
+    <p class="subtitle">Prevuci fajlove ovde ili klikni da ih izabereš</p>
+
+    <div class="upload-area" id="uploadArea">
+        <input type="file" id="fileInput" multiple style="display: none;">
+        <div class="upload-icon">
+            <svg width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+            </svg>
         </div>
-        
-        <input type="file" id="fileInput" multiple> 
-        <div id="filesList" class="files-list"></div>
-        
-        <button id="uploadButton" class="upload-btn" disabled>Upload</button>
-        
-        <div id="loaderContainer" class="loader-container">
-            <div class="progress-info">
-                <div id="percentText" class="percent">0%</div>
-                <div id="uploadSpeed" class="upload-speed">Računam...</div>
-            </div>
-            <div class="progress-bar">
-                <div id="progressFill" class="progress-fill"></div>
-            </div>
-        </div>
-        
-        <p id="status" class="status"></p>
-        
-        <div id="linkContainer" class="link-container">
-            <p class="link-text">Vaši fajlovi su spremni! Evo vašeg linka:</p>
-            <p id="linkUrl" class="link-url"></p>
-            <button id="copyButton" class="copy-button">📋</button>
-            <p class="expire-notice">Ovi fajlovi će biti dostupni {{ expiry_days }} dana</p>
+        <div class="upload-text">
+            <span class="primary-text">Prevuci fajlove ovde</span>
+            <span class="secondary-text">ili</span>
+            <button class="browse-button">Izaberi fajlove</button>
         </div>
     </div>
-</div>
 
-<div id="copiedNotification" class="copied">Link kopiran u clipboard!</div>
+    <div class="selected-files" id="selectedFiles"></div>
+    
+    <button class="upload-button" id="uploadButton" disabled>
+        <span class="button-text">Otpremi fajlove</span>
+        <div class="loader" style="display: none;"></div>
+    </button>
+
+    <div class="progress-container" style="display: none;">
+        <div class="progress-bar">
+            <div class="progress-fill"></div>
+        </div>
+        <div class="progress-text"></div>
+        <div class="progress-stats">
+            <span class="upload-speed"></span>
+            <span class="upload-eta"></span>
+        </div>
+    </div>
+
+    <div class="status-message" style="display: none;"></div>
+    
+    <div class="link-container" style="display: none;">
+        <p>Link za preuzimanje (važi {{ expiry_days }} dana):</p>
+        <div class="link-box">
+            <input type="text" id="downloadLink" readonly>
+            <button class="copy-button" id="copyButton">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M20 9h-9a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2z"/>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <div class="notification" id="copyNotification">
+        Link kopiran u clipboard!
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}

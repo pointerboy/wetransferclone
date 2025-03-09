@@ -3,61 +3,54 @@
 {% block title %}Preuzmi Fajlove{% endblock %}
 
 {% block content %}
-<div class="container">
-    <h2>Vaši fajlovi su spremni</h2>
+<div class="download-container">
+    <h1>Tvoji fajlovi su spremni</h1>
     
     <div class="download-info">
-        <div class="info-item">
-            <span class="info-label">Datum otpremanja:</span>
-            <span class="info-value">{{ upload_date }}</span>
-        </div>
-        <div class="info-item">
-            <span class="info-label">Ističe:</span>
-            <span class="info-value">{{ expiry_date }}</span>
-        </div>
-        <div class="info-item">
-            <span class="info-label">Preostalo vreme:</span>
-            <span class="info-value">{{ days_left }} dan{{ "a" if days_left != 1 else "" }}</span>
-        </div>
+        <p>Otpremljeno: {{ upload_date }}</p>
+        <p>Ističe: {{ expiry_date }} (još {{ days_left }} dana)</p>
     </div>
-    
-    <a href="#" id="downloadAllButton" class="download-all-button">
-        <span class="button-icon">⬇️</span>
+
+    <button class="download-all-button" id="downloadAllButton">
         <span class="button-text">Preuzmi sve fajlove</span>
-    </a>
-    
-    <div id="downloadProgress" class="download-progress">
+        <div class="loader" style="display: none;"></div>
+    </button>
+
+    <div class="progress-container" style="display: none;">
         <div class="progress-bar">
-            <div id="progressFill" class="progress-fill"></div>
+            <div class="progress-fill"></div>
         </div>
-        <div id="progressText" class="progress-text">Pripremam preuzimanje...</div>
+        <div class="progress-text"></div>
     </div>
-    
+
     <div class="files-list">
         {% for file in files %}
         <div class="file-item">
             <div class="file-info">
-                <div class="file-name">{{ file.filename }}</div>
-                <div class="file-size">{{ file.size_formatted }}</div>
+                <span class="file-name">{{ file.filename }}</span>
+                <span class="file-size">{{ file.size_formatted }}</span>
             </div>
-            <a href="{{ file.download_url }}" class="download-button">
-                <span class="button-icon">⬇️</span>
-                <span class="button-text">Preuzmi</span>
+            <a href="{{ file.download_url }}" class="download-button" download>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                </svg>
             </a>
         </div>
         {% endfor %}
     </div>
-    
-    <a href="/" class="back-link">
-        <span class="button-icon">⬅️</span>
-        <span class="button-text">Otpremi još fajlova</span>
-    </a>
+
+    <div class="upload-link">
+        <p>Želiš da podeliš svoje fajlove?</p>
+        <a href="/" class="button">Otpremi fajlove</a>
+    </div>
 </div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
-    window.downloadFiles = {{ files|tojson|safe }};
+    (function() {
+        window.downloadFiles = {{ files | tojson | safe }};
+    })();
 </script>
 <script src="{{ url_for('static', path='js/download.js') }}"></script>
 {% endblock %} 

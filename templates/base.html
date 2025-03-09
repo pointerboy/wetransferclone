@@ -3,30 +3,31 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Transfer Fajlova{% endblock %}</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
-    <link href="{{ url_for('static', path='css/styles.css') }}" rel="stylesheet">
+    <title>{% block title %}{% endblock %} - Transfer Fajlova</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', path='css/styles.css') }}">
     {% block extra_css %}{% endblock %}
 </head>
 <body>
-    <div class="split-layout">
-        <div class="upload-section">
+    <div class="background-container">
+        <div class="background-image"></div>
+        <div class="background-credit"></div>
+    </div>
+
+    <div class="container">
+        <div class="content">
             {% block content %}{% endblock %}
         </div>
         
-        <div class="background-section">
-            {% for image in background_images %}
-            <img src="{{ image.url }}" class="background-image {% if loop.first %}active{% endif %}" alt="Background">
-            {% endfor %}
-            <div class="background-overlay"></div>
-            <div class="background-credit"></div>
-        </div>
+        <footer class="footer">
+            <p>&copy; {{ year }} Transfer Fajlova. Sva prava zadržana.</p>
+        </footer>
     </div>
-    
-    <div class="copyright">© {{ year }} Luka Trbović. Sva prava zadržana.</div>
-    
+
     <script>
-        window.backgroundImages = {{ background_images|tojson|safe }};
+        (function() {
+            window.backgroundImages = {{ background_images | tojson | safe }};
+        })();
     </script>
     {% block extra_js %}{% endblock %}
 </body>

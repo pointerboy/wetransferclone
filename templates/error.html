@@ -3,9 +3,11 @@
 {% block title %}{{ error_title }}{% endblock %}
 
 {% block content %}
-<div class="container">
-    <h1>{{ error_title }}</h1>
-    <p>{{ error_message }}</p>
-    <a href="/" class="back-link">Povratak na Upload Stranicu</a>
+<div class="error-container">
+    <div class="error-content">
+        <h1>{{ error_title }}</h1>
+        <p>{{ error_message }}</p>
+        <a href="/" class="button">Nazad na početnu</a>
+    </div>
 </div>
 {% endblock %} 

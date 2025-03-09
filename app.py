@@ -601,6 +601,17 @@ async def upload_file(files: list[UploadFile] = File(...)):
             print(f"Error cleaning up rclone config: {str(e)}")
 
 
+def format_size(size_in_bytes):
+    if size_in_bytes == 0:
+        return "0 Bytes"
+    k = 1024
+    sizes = ["Bytes", "KB", "MB", "GB"]
+    i = int(math.log(size_in_bytes) / math.log(k))
+    return f"{size_in_bytes / math.pow(k, i):.2f} {sizes[i]}"
+
+def format_date(timestamp):
+    return datetime.datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")
+
 @app.get("/file/{file_id}", response_class=HTMLResponse)
 async def file_page(request: Request, file_id: str, background_tasks: BackgroundTasks):
     # Clean up expired files in the background
@@ -609,7 +620,13 @@ async def file_page(request: Request, file_id: str, background_tasks: Background
     file_data = get_file_metadata(file_id)
 
     if not file_data:
-        return templates.TemplateResponse("error.html", {"request": request, "error_title": "Fajlovi Nisu Pronađeni", "error_message": "Izvinite, fajlovi koje tražite ne postoje ili su uklonjeni.", "background_images": BACKGROUND_IMAGES, "year": datetime.datetime.now().year}, status_code=404)
+        return templates.TemplateResponse("error.html", {
+            "request": request,
+            "error_title": "Fajlovi Nisu Pronađeni",
+            "error_message": "Izvinite, fajlovi koje tražite ne postoje ili su uklonjeni.",
+            "background_images": BACKGROUND_IMAGES,
+            "year": datetime.datetime.now().year
+        }, status_code=404)
 
     files = file_data.get("files", [])
     upload_date = file_data.get("upload_date", 0)
@@ -620,7 +637,12 @@ async def file_page(request: Request, file_id: str, background_tasks: Background
     for file in files:
         size = file.get("size", 0)
         formatted_size = format_size(size)
-        formatted_files.append({"filename": file["filename"], "size": size, "size_formatted": formatted_size, "download_url": f"/download/{file_id}/{file['filename']}"})
+        formatted_files.append({
+            "filename": file["filename"],
+            "size": size,
+            "size_formatted": formatted_size,
+            "download_url": f"/download/{file_id}/{file['filename']}"
+        })
 
     # Format dates
     formatted_upload = format_date(upload_date) if upload_date else "Nepoznato"
@@ -628,18 +650,15 @@ async def file_page(request: Request, file_id: str, background_tasks: Background
 
     days_left = max(0, int((expiry_date - time.time()) / (24 * 60 * 60))) if expiry_date else 0
 
-    return templates.TemplateResponse("download.html", {"request": request, "files": formatted_files, "upload_date": formatted_upload, "expiry_date": formatted_expiry, "days_left": days_left, "background_images": BACKGROUND_IMAGES, "year": datetime.datetime.now().year})
-
-    def format_size(size_in_bytes):
-        if size_in_bytes == 0:
-            return "0 Bytes"
-        k = 1024
-        sizes = ["Bytes", "KB", "MB", "GB"]
-        i = int(math.log(size_in_bytes) / math.log(k))
-        return f"{size_in_bytes / math.pow(k, i):.2f} {sizes[i]}"
-
-    def format_date(timestamp):
-        return datetime.datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")
+    return templates.TemplateResponse("download.html", {
+        "request": request,
+        "files": formatted_files,
+        "upload_date": formatted_upload,
+        "expiry_date": formatted_expiry,
+        "days_left": days_left,
+        "background_images": BACKGROUND_IMAGES,
+        "year": datetime.datetime.now().year
+    })
 
 
 @app.get("/download/{file_id}/{filename}")
@@ -669,20 +688,44 @@ async def download_file(file_id: str, filename: str, background_tasks: Backgroun
         rclone_config = create_rclone_config()
 
         async def file_stream():
+            process = None
             try:
-                process = await asyncio.create_subprocess_exec(rclone_path, "--config", rclone_config, "cat", "--no-traverse", "--contimeout", "30s", "--timeout", "30s", "--retries", "3", "--low-level-retries", "10", f"b2:{B2_BUCKET_NAME}/{requested_file['file_path']}", stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                process = await asyncio.create_subprocess_exec(
+                    rclone_path,
+                    "--config", rclone_config,
+                    "cat",
+                    "--no-traverse",
+                    "--contimeout", "30s",
+                    "--timeout", "30s",
+                    "--retries", "3",
+                    "--low-level-retries", "10",
+                    f"b2:{B2_BUCKET_NAME}/{requested_file['file_path']}",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
 
                 while True:
                     chunk = await process.stdout.read(CHUNK_SIZE)
                     if not chunk:
                         break
-                        yield chunk
+                    yield chunk
 
+                # Check for any errors after streaming is complete
+                stderr = await process.stderr.read()
                 await process.wait()
                 if process.returncode != 0:
-                    stderr = await process.stderr.read()
                     print(f"Rclone error: {stderr.decode()}")
                     raise Exception(f"Failed to download file: {stderr.decode()}")
+
+            except Exception as e:
+                print(f"Error in file stream: {str(e)}")
+                if process:
+                    try:
+                        process.terminate()
+                        await process.wait()
+                    except:
+                        pass
+                raise
             finally:
                 # Clean up config
                 try:
@@ -692,7 +735,12 @@ async def download_file(file_id: str, filename: str, background_tasks: Backgroun
                     print(f"Error cleaning up rclone config: {str(e)}")
 
         # Set appropriate headers for the response
-        headers = {"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"}
+        headers = {
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
 
         return StreamingResponse(file_stream(), media_type=content_type, headers=headers)
 
