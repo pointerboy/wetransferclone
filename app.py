@@ -128,24 +128,24 @@ def cleanup_temp_storage():
         stats = get_storage_stats()
         if not stats:
             return
-            
+
         current_usage = stats["temp_usage"]
         storage_percent = stats["percent"]
-        
+
         # Clean up if temp storage exceeds limit OR overall storage is >95% full
         if current_usage > MAX_TEMP_STORAGE or storage_percent > 95:
             print(f"Storage cleanup needed: Temp usage: {current_usage / (1024**3):.2f}GB, Storage used: {storage_percent}%")
-        current_time = time.time()
-            
+            current_time = time.time()
+
             # If storage is very tight (>98%), be more aggressive with cleanup
             aggressive_cleanup = storage_percent > 98
             cleanup_threshold = CACHE_EXPIRY // 3 if aggressive_cleanup else CACHE_EXPIRY
-            
+
             # Sort files by age and size
             files_to_clean = []
-        for dirpath, dirnames, filenames in os.walk(TEMP_UPLOAD_DIR):
-            for f in filenames:
-                fp = os.path.join(dirpath, f)
+            for dirpath, dirnames, filenames in os.walk(TEMP_UPLOAD_DIR):
+                for f in filenames:
+                    fp = os.path.join(dirpath, f)
                     try:
                         if os.path.exists(fp):
                             stat = os.stat(fp)
@@ -156,24 +156,24 @@ def cleanup_temp_storage():
                             })
                     except Exception:
                         continue
-            
+
             # Sort by age (oldest first) and size (largest first)
             files_to_clean.sort(key=lambda x: (-x['age'], -x['size']))
-            
+
             # Delete files until we're under the threshold
             for file_info in files_to_clean:
                 try:
-                    if (current_usage > MAX_TEMP_STORAGE * 0.9 or  # Keep deleting until we're at 90%
-                        storage_percent > 95 or 
+                    if (current_usage > MAX_TEMP_STORAGE * 0.9 or
+                        storage_percent > 95 or
                         file_info['age'] > cleanup_threshold):
                         os.remove(file_info['path'])
                         print(f"Deleted temporary file: {file_info['path']} (Size: {file_info['size'] / (1024**2):.2f}MB, Age: {file_info['age'] / 3600:.1f}h)")
                         current_usage -= file_info['size']
                         if current_usage <= MAX_TEMP_STORAGE * 0.8 and storage_percent <= 90:
                             break
-                    except Exception as e:
+                except Exception as e:
                     print(f"Error deleting temporary file {file_info['path']}: {str(e)}")
-                        
+
             # After cleanup, check if we need to alert about storage issues
             new_stats = get_storage_stats()
             if new_stats and new_stats["percent"] > 98:
@@ -625,8 +625,8 @@ async def upload_file(files: list[UploadFile] = File(...)):
                         # Clean up temporary file
                         try:
                             if os.path.exists(temp_file_path):
-                            os.unlink(temp_file_path)
-                            print("Temporary file cleaned up")
+                                os.unlink(temp_file_path)
+                                print("Temporary file cleaned up")
                         except Exception as e:
                             print(f"Error cleaning up temporary file: {str(e)}")
                 except Exception as e:
@@ -670,8 +670,8 @@ async def upload_file(files: list[UploadFile] = File(...)):
         # Clean up config file
         try:
             if os.path.exists(rclone_config):
-            os.remove(rclone_config)
-            print("Rclone config file cleaned up")
+                os.remove(rclone_config)
+                print("Rclone config file cleaned up")
         except Exception as e:
             print(f"Error cleaning up rclone config: {str(e)}")
 
