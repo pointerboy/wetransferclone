@@ -7,6 +7,7 @@ from typing import Dict, Any
 from b2sdk.v2 import B2Api, InMemoryAccountInfo
 import httpx
 import mimetypes
+import psutil
 
 # B2 Configuration
 B2_APPLICATION_KEY_ID = "bec925575d01"
@@ -17,20 +18,42 @@ B2_BUCKET_NAME = "fdmbucket"
 FILES_DB = "files.json"
 FILE_EXPIRY_DAYS = 7
 
-# Storage configuration
+# Storage configuration - optimized for 100GB disk and 2GB RAM
 STORAGE_BASE_DIR = "/mnt/disk"  # Base directory for all storage operations
 TEMP_UPLOAD_DIR = os.path.join(STORAGE_BASE_DIR, "temp_uploads")  # Temporary upload directory
 TOOLS_DIR = os.path.join(STORAGE_BASE_DIR, "tools")  # Tools directory
-MAX_TEMP_STORAGE = 90 * 1024 * 1024 * 1024  # 90GB max temp storage (leaving some buffer for system)
-CHUNK_SIZE = 64 * 1024 * 1024  # 64MB chunks for faster file operations
-MAX_CONCURRENT_UPLOADS = 16  # Increased concurrent uploads for better throughput
-CACHE_EXPIRY = 24 * 60 * 60  # 24 hours cache expiry
+
+# Calculate available memory and storage
+TOTAL_MEMORY = psutil.virtual_memory().total
+TOTAL_STORAGE = 100 * 1024 * 1024 * 1024  # 100GB dedicated storage
+
+# Dynamic resource allocation based on system specs
+MAX_TEMP_STORAGE = min(85 * 1024 * 1024 * 1024, TOTAL_STORAGE * 0.85)  # 85GB or 85% of storage for temp files
+CHUNK_SIZE = min(32 * 1024 * 1024, TOTAL_MEMORY // 8)  # 32MB chunks or 1/8 of RAM
+MAX_CONCURRENT_UPLOADS = 4  # Limited for single vCPU
+MEMORY_BUFFER = min(256 * 1024 * 1024, TOTAL_MEMORY // 4)  # 256MB or 1/4 of RAM
+CACHE_EXPIRY = 3 * 60 * 60  # 3 hours cache expiry (reduced to help manage storage better)
+
+# Background images configuration
+BACKGROUND_IMAGES = [
+    {
+        "url": "https://f004.backblazeb2.com/file/fdmbucket/backgrounds/bg1.jpg",
+        "credit": "Foto: Francesco Ungaro na Pexels"
+    },
+    {
+        "url": "https://f004.backblazeb2.com/file/fdmbucket/backgrounds/bg2.jpg",
+        "credit": "Foto: Francesco Ungaro na Pexels"
+    },
+    {
+        "url": "https://f004.backblazeb2.com/file/fdmbucket/backgrounds/bg3.jpg",
+        "credit": "Foto: Francesco Ungaro na Pexels"
+    }
+]
 
 # Ensure directories exist with proper permissions
 for directory in [STORAGE_BASE_DIR, TEMP_UPLOAD_DIR, TOOLS_DIR]:
     try:
         os.makedirs(directory, exist_ok=True)
-        # Set directory permissions to 755 (rwxr-xr-x)
         os.chmod(directory, 0o755)
     except Exception as e:
         print(f"Error creating directory {directory}: {str(e)}")
@@ -44,61 +67,139 @@ if not os.path.exists(FILES_DB):
 def get_temp_storage_usage():
     """Get current usage of temporary storage"""
     total_size = 0
-    for dirpath, dirnames, filenames in os.walk(TEMP_UPLOAD_DIR):
-        for f in filenames:
-            fp = os.path.join(dirpath, f)
-            total_size += os.path.getsize(fp)
-    return total_size
-
-def cleanup_temp_storage():
-    """Clean up temporary storage if it exceeds the limit"""
-    current_usage = get_temp_storage_usage()
-    if current_usage > MAX_TEMP_STORAGE:
-        print(f"Temporary storage usage ({current_usage / (1024**3):.2f}GB) exceeds limit. Cleaning up...")
-        # Delete files older than cache expiry
-        current_time = time.time()
+    try:
         for dirpath, dirnames, filenames in os.walk(TEMP_UPLOAD_DIR):
             for f in filenames:
                 fp = os.path.join(dirpath, f)
-                if current_time - os.path.getmtime(fp) > CACHE_EXPIRY:
+                if os.path.exists(fp):  # Check if file still exists
                     try:
-                        os.remove(fp)
-                        print(f"Deleted old temporary file: {fp}")
-                    except Exception as e:
-                        print(f"Error deleting temporary file {fp}: {str(e)}")
+                        total_size += os.path.getsize(fp)
+                    except OSError:
+                        continue
+    except Exception as e:
+        print(f"Error calculating temp storage usage: {str(e)}")
+    return total_size
 
-# Function to ensure rclone is available
+def get_storage_stats():
+    """Get current storage statistics"""
+    try:
+        usage = psutil.disk_usage(STORAGE_BASE_DIR)
+        temp_usage = get_temp_storage_usage()
+        return {
+            "total": usage.total,
+            "used": usage.used,
+            "free": usage.free,
+            "temp_usage": temp_usage,
+            "percent": usage.percent
+        }
+    except Exception as e:
+        print(f"Error getting storage stats: {str(e)}")
+        return None
+
+def should_accept_upload(file_size: int) -> bool:
+    """Check if we can accept a new upload based on storage availability"""
+    try:
+        stats = get_storage_stats()
+        if not stats:
+            return False
+            
+        # Calculate available temp storage
+        available_temp = MAX_TEMP_STORAGE - stats["temp_usage"]
+        
+        # We need at least file_size + 500MB buffer available (reduced buffer for larger files)
+        buffer_size = 500 * 1024 * 1024  # 500MB buffer
+        
+        # For very large files (>30GB), reduce buffer requirement
+        if file_size > 30 * 1024 * 1024 * 1024:
+            buffer_size = 250 * 1024 * 1024  # 250MB buffer for large files
+        
+        # Check both temp storage and overall storage
+        return (available_temp >= file_size + buffer_size and 
+                stats["free"] >= file_size + buffer_size)
+    except Exception as e:
+        print(f"Error checking storage availability: {str(e)}")
+        return False
+
+def cleanup_temp_storage():
+    """Clean up temporary storage if it exceeds limits"""
+    try:
+        stats = get_storage_stats()
+        if not stats:
+            return
+            
+        current_usage = stats["temp_usage"]
+        storage_percent = stats["percent"]
+        
+        # Clean up if temp storage exceeds limit OR overall storage is >95% full
+        if current_usage > MAX_TEMP_STORAGE or storage_percent > 95:
+            print(f"Storage cleanup needed: Temp usage: {current_usage / (1024**3):.2f}GB, Storage used: {storage_percent}%")
+            current_time = time.time()
+            
+            # If storage is very tight (>98%), be more aggressive with cleanup
+            aggressive_cleanup = storage_percent > 98
+            cleanup_threshold = CACHE_EXPIRY // 3 if aggressive_cleanup else CACHE_EXPIRY
+            
+            # Sort files by age and size
+            files_to_clean = []
+            for dirpath, dirnames, filenames in os.walk(TEMP_UPLOAD_DIR):
+                for f in filenames:
+                    fp = os.path.join(dirpath, f)
+                    try:
+                        if os.path.exists(fp):
+                            stat = os.stat(fp)
+                            files_to_clean.append({
+                                'path': fp,
+                                'size': stat.st_size,
+                                'age': current_time - stat.st_mtime
+                            })
+                    except Exception:
+                        continue
+            
+            # Sort by age (oldest first) and size (largest first)
+            files_to_clean.sort(key=lambda x: (-x['age'], -x['size']))
+            
+            # Delete files until we're under the threshold
+            for file_info in files_to_clean:
+                try:
+                    if (current_usage > MAX_TEMP_STORAGE * 0.9 or  # Keep deleting until we're at 90%
+                        storage_percent > 95 or 
+                        file_info['age'] > cleanup_threshold):
+                        os.remove(file_info['path'])
+                        print(f"Deleted temporary file: {file_info['path']} (Size: {file_info['size'] / (1024**2):.2f}MB, Age: {file_info['age'] / 3600:.1f}h)")
+                        current_usage -= file_info['size']
+                        if current_usage <= MAX_TEMP_STORAGE * 0.8 and storage_percent <= 90:
+                            break
+                except Exception as e:
+                    print(f"Error deleting temporary file {file_info['path']}: {str(e)}")
+                        
+            # After cleanup, check if we need to alert about storage issues
+            new_stats = get_storage_stats()
+            if new_stats and new_stats["percent"] > 98:
+                print("WARNING: Storage usage remains critical after cleanup!")
+    except Exception as e:
+        print(f"Error during temp storage cleanup: {str(e)}")
+
+# Function to ensure rclone is available with optimized configuration
 def ensure_rclone():
-    """Ensure rclone is available, downloading it if necessary"""
-    # Define rclone paths
+    """Ensure rclone is available with optimized configuration"""
     rclone_dir = TOOLS_DIR
-    
-    # Determine platform-specific executable name
     system = platform.system().lower()
-    if system == "windows":
-        rclone_exe = os.path.join(rclone_dir, "rclone.exe")
-    else:
-        rclone_exe = os.path.join(rclone_dir, "rclone")
+    rclone_exe = os.path.join(rclone_dir, "rclone.exe" if system == "windows" else "rclone")
     
-    # Check if rclone already exists
     if os.path.exists(rclone_exe):
         return rclone_exe
-    
+        
     print("Rclone not found. Downloading...")
     
-    # Determine download URL based on platform
-    if system == "windows":
-        download_url = "https://downloads.rclone.org/rclone-current-windows-amd64.zip"
-        zip_path = os.path.join(rclone_dir, "rclone.zip")
-    elif system == "darwin":  # macOS
-        download_url = "https://downloads.rclone.org/rclone-current-osx-amd64.zip"
-        zip_path = os.path.join(rclone_dir, "rclone.zip")
-    else:  # Linux and others
-        download_url = "https://downloads.rclone.org/rclone-current-linux-amd64.zip"
-        zip_path = os.path.join(rclone_dir, "rclone.zip")
-    
-    # Download rclone
     try:
+        # Download and setup rclone
+        download_url = {
+            "windows": "https://downloads.rclone.org/rclone-current-windows-amd64.zip",
+            "darwin": "https://downloads.rclone.org/rclone-current-osx-amd64.zip"
+        }.get(system, "https://downloads.rclone.org/rclone-current-linux-amd64.zip")
+        
+        zip_path = os.path.join(rclone_dir, "rclone.zip")
+        
         with httpx.Client() as client:
             response = client.get(download_url)
             response.raise_for_status()
@@ -106,35 +207,31 @@ def ensure_rclone():
             with open(zip_path, 'wb') as f:
                 f.write(response.content)
         
-        # Extract rclone
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             zip_ref.extractall(rclone_dir)
         
-        # Find the extracted rclone executable
-        extracted_dir = None
-        for item in os.listdir(rclone_dir):
-            if item.startswith("rclone-") and os.path.isdir(os.path.join(rclone_dir, item)):
-                extracted_dir = os.path.join(rclone_dir, item)
-                break
+        # Find extracted directory
+        extracted_dir = next(
+            (d for d in os.listdir(rclone_dir) 
+             if d.startswith("rclone-") and os.path.isdir(os.path.join(rclone_dir, d))),
+            None
+        )
         
         if not extracted_dir:
             raise Exception("Could not find extracted rclone directory")
         
-        # Move the rclone executable to the tools directory
-        if system == "windows":
-            src_exe = os.path.join(extracted_dir, "rclone.exe")
-        else:
-            src_exe = os.path.join(extracted_dir, "rclone")
-        
+        # Move executable
+        src_exe = os.path.join(rclone_dir, extracted_dir, 
+                              "rclone.exe" if system == "windows" else "rclone")
         shutil.copy2(src_exe, rclone_exe)
         
-        # Make executable on Unix-like systems
+        # Set permissions on Unix-like systems
         if system != "windows":
             os.chmod(rclone_exe, 0o755)
         
         # Clean up
         os.remove(zip_path)
-        shutil.rmtree(extracted_dir)
+        shutil.rmtree(os.path.join(rclone_dir, extracted_dir))
         
         print(f"Rclone downloaded and installed at {rclone_exe}")
         return rclone_exe
@@ -142,6 +239,30 @@ def ensure_rclone():
     except Exception as e:
         print(f"Error downloading rclone: {str(e)}")
         raise Exception(f"Failed to download rclone: {str(e)}")
+
+# Create optimized rclone configuration
+def create_rclone_config():
+    """Create optimized rclone configuration file"""
+    config_path = os.path.join(os.getcwd(), "rclone.conf")
+    try:
+        with open(config_path, "w") as f:
+            f.write(f"""[b2]
+type = b2
+account = {B2_APPLICATION_KEY_ID}
+key = {B2_APPLICATION_KEY}
+hard_delete = true
+upload_cutoff = {CHUNK_SIZE}
+chunk_size = {CHUNK_SIZE}
+max_upload_parts = 10000
+max_upload_concurrency = {MAX_CONCURRENT_UPLOADS}
+memory_pool_flush_time = 1m
+memory_pool_use_mmap = false
+use_mmap = false
+""")
+        return config_path
+    except Exception as e:
+        print(f"Error creating rclone config: {str(e)}")
+        raise
 
 # Initialize B2 client
 info = InMemoryAccountInfo()
@@ -294,7 +415,10 @@ async def upload_page(background_tasks: BackgroundTasks):
     # Clean up expired files in the background
     cleanup_expired_files(background_tasks)
     
-    return """
+    # Convert background images to JavaScript array
+    background_images_js = json.dumps(BACKGROUND_IMAGES)
+    
+    return f"""
     <html>
         <head>
             <title>Transfer Fajlova</title>
@@ -790,7 +914,7 @@ async def upload_page(background_tasks: BackgroundTasks):
                 }
             </style>
             <script>
-                document.addEventListener("DOMContentLoaded", function() {
+                document.addEventListener("DOMContentLoaded", function() {{
                     // Get all required elements
                     const uploadArea = document.getElementById("uploadArea");
                     const fileInput = document.getElementById("fileInput");
@@ -805,13 +929,65 @@ async def upload_page(background_tasks: BackgroundTasks):
                     const copyButton = document.getElementById("copyButton");
                     const linkUrl = document.getElementById("linkUrl");
                     const copiedNotification = document.getElementById("copiedNotification");
+                    const backgroundSection = document.querySelector('.background-section');
+                    const backgroundCredit = document.querySelector('.background-credit');
                     
                     // Initialize state variables
                     let selectedFiles = [];
                     let uploadStartTime = null;
                     let lastUploadedBytes = 0;
                     let lastSpeedUpdateTime = null;
-
+                    
+                    // Initialize background images
+                    const backgroundImages = {background_images_js};
+                    let currentImageIndex = 0;
+                    
+                    function createBackgroundImage(imageData) {{
+                        const img = document.createElement('img');
+                        img.src = imageData.url;
+                        img.className = 'background-image';
+                        img.onload = function() {{
+                            img.classList.add('active');
+                        }};
+                        return img;
+                    }}
+                    
+                    function rotateBackground() {{
+                        if (!backgroundSection) return;
+                        
+                        const currentImage = document.querySelector('.background-image.active');
+                        const nextImageData = backgroundImages[currentImageIndex];
+                        const nextImage = createBackgroundImage(nextImageData);
+                        
+                        backgroundSection.appendChild(nextImage);
+                        
+                        if (currentImage) {{
+                            currentImage.classList.remove('active');
+                            setTimeout(() => currentImage.remove(), 500);
+                        }}
+                        
+                        if (backgroundCredit) {{
+                            backgroundCredit.textContent = nextImageData.credit;
+                        }}
+                        
+                        currentImageIndex = (currentImageIndex + 1) % backgroundImages.length;
+                    }}
+                    
+                    // Initialize background
+                    if (backgroundSection && backgroundImages.length > 0) {{
+                        const firstImage = createBackgroundImage(backgroundImages[0]);
+                        backgroundSection.appendChild(firstImage);
+                        if (backgroundCredit) {{
+                            backgroundCredit.textContent = backgroundImages[0].credit;
+                        }}
+                        
+                        // Start rotation after a delay
+                        setTimeout(() => {{
+                            rotateBackground();
+                            setInterval(rotateBackground, 10000);
+                        }}, 5000);
+                    }}
+                    
                     // Utility functions
                     function formatBytes(bytes, decimals = 2) {
                         if (bytes === 0) return '0 Bytes';
@@ -1101,7 +1277,7 @@ async def upload_page(background_tasks: BackgroundTasks):
                                 });
                         });
                     }
-                });
+                }});
             </script>
         </head>
         <body>
@@ -1159,43 +1335,39 @@ async def upload_file(files: list[UploadFile] = File(...)):
         raise HTTPException(status_code=400, detail="No files provided")
     
     try:
+        # Calculate total upload size
+        total_size = sum(f.size for f in files)
+        
+        # Check if we can accept the upload
+        if not should_accept_upload(total_size):
+            raise HTTPException(
+                status_code=507,
+                detail="Insufficient storage space available. Please try again later."
+            )
+        
         # Ensure rclone is available
         rclone_path = ensure_rclone()
         unique_folder = generate_unique_folder()
         print(f"\n=== Starting new upload session ===")
         print(f"Number of files: {len(files)}")
+        print(f"Total size: {total_size / (1024**3):.2f}GB")
         print(f"Generated unique folder: {unique_folder}")
 
-        # Create rclone config file with proper B2 configuration
-        rclone_config = os.path.join(os.getcwd(), "rclone.conf")
-        with open(rclone_config, "w") as f:
-            f.write(f"""[b2]
-type = b2
-account = {B2_APPLICATION_KEY_ID}
-key = {B2_APPLICATION_KEY}
-hard_delete = true
-upload_cutoff = 200M
-chunk_size = 100M
-max_upload_parts = 100
-max_upload_concurrency = 8
-max_upload_speed = 0
-max_download_speed = 0
-buffer_size = 200M
-memory_buffer_size = 200M
-""")
+        # Create optimized rclone config
+        rclone_config = create_rclone_config()
 
         files_data = []
         upload_tasks = []
-        semaphore = asyncio.Semaphore(MAX_CONCURRENT_UPLOADS)  # Limit concurrent uploads
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_UPLOADS)
 
         async def upload_single_file(file: UploadFile, file_path: str, content_type: str) -> dict:
-            async with semaphore:  # Use semaphore to limit concurrent uploads
+            async with semaphore:
                 try:
                     if not file.filename:
                         raise HTTPException(status_code=400, detail="File name is required")
                     
                     print(f"\n=== Processing file: {file.filename} ===")
-                    print(f"File size: {file.size} bytes")
+                    print(f"File size: {file.size / (1024**3):.2f}GB")
                     
                     # Validate filename
                     safe_filename = file.filename.encode('utf-8').decode('utf-8')
@@ -1207,13 +1379,12 @@ memory_buffer_size = 200M
                     
                     try:
                         print("Starting file read...")
-                        # Read and write in chunks with timeout
                         total_size = 0
                         last_progress_time = time.time()
                         last_progress_size = 0
                         
-                        # Open file in binary write mode with buffering
-                        with open(temp_file_path, 'wb', buffering=8*1024*1024) as temp_file:
+                        # Open file in binary write mode with optimized buffering
+                        with open(temp_file_path, 'wb', buffering=MEMORY_BUFFER) as temp_file:
                             while True:
                                 try:
                                     chunk = await asyncio.wait_for(file.read(CHUNK_SIZE), timeout=30.0)
@@ -1222,15 +1393,19 @@ memory_buffer_size = 200M
                                     temp_file.write(chunk)
                                     total_size += len(chunk)
                                     
-                                    # Update progress every 2 seconds
                                     current_time = time.time()
                                     if current_time - last_progress_time >= 2:
                                         bytes_since_last = total_size - last_progress_size
                                         speed = bytes_since_last / (current_time - last_progress_time)
-                                        print(f"Progress: {total_size} bytes written ({format(total_size/file.size*100, '.1f')}%)")
+                                        print(f"Progress: {total_size / (1024**3):.2f}GB written ({format(total_size/file.size*100, '.1f')}%)")
                                         print(f"Current speed: {format(speed/1024/1024, '.1f')} MB/s")
                                         last_progress_time = current_time
                                         last_progress_size = total_size
+                                        
+                                        # Check storage status during upload
+                                        stats = get_storage_stats()
+                                        if stats and stats["percent"] > 95:
+                                            print("WARNING: Storage usage critical during upload!")
                                         
                                 except asyncio.TimeoutError:
                                     print("Upload timeout - connection too slow")
@@ -1241,43 +1416,48 @@ memory_buffer_size = 200M
                         
                         print("File read complete, starting B2 upload...")
                         
-                        # Upload to B2 using the SDK
-                        print("Starting B2 upload...")
+                        # Use rclone for upload with optimized settings
+                        b2_path = f"b2:{B2_BUCKET_NAME}/{file_path}"
                         
-                        # Configure upload settings
-                        upload_settings = {
-                            'min_part_size': 200 * 1024 * 1024,  # 200MB minimum part size
-                            'max_part_size': 200 * 1024 * 1024,  # 200MB maximum part size
-                            'max_concurrent_uploads': 16,  # Increased concurrent uploads
-                            'max_retries': 3,  # Number of retries for failed uploads
-                            'retry_delay': 5,  # Delay between retries in seconds
-                            'upload_buffer_size': 200 * 1024 * 1024,  # 200MB upload buffer
-                            'download_buffer_size': 200 * 1024 * 1024,  # 200MB download buffer
-                            'max_upload_speed': 0,  # No speed limit
-                            'max_download_speed': 0,  # No speed limit
-                            'thread_count': 16,  # Number of threads for parallel operations
-                        }
-                        
-                        # Start the upload
-                        file_info = {
-                            'Content-Type': content_type,
-                            'X-Bz-File-Name': safe_filename,
-                            'X-Bz-Content-Sha1': 'do_not_verify',  # Skip SHA1 verification for faster uploads
-                            'X-Bz-Info-B2-Cache-Control': 'max-age=604800'  # 7 days cache
-                        }
-                        
-                        # Upload the file
-                        uploaded_file = bucket.upload_local_file(
-                            local_file=temp_file_path,
-                            file_name=file_path,
-                            file_info=file_info,
-                            **upload_settings
+                        # Run rclone copy command with progress monitoring
+                        process = await asyncio.create_subprocess_exec(
+                            rclone_path,
+                            "--config", rclone_config,
+                            "copy",
+                            "--no-traverse",
+                            "--transfers", str(MAX_CONCURRENT_UPLOADS),
+                            "--checkers", "4",
+                            "--contimeout", "30s",
+                            "--timeout", "30s",
+                            "--retries", "3",
+                            "--low-level-retries", "10",
+                            "--stats", "1s",
+                            "--stats-one-line",
+                            "--stats-log-level", "NOTICE",
+                            temp_file_path,
+                            b2_path,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE
                         )
                         
-                        print("B2 upload completed successfully")
-                        
-                        # Generate download URL
-                        file_url = uploaded_file.get_download_url()
+                        # Monitor upload progress
+                        while True:
+                            try:
+                                stdout_data = await asyncio.wait_for(process.stdout.readline(), timeout=1.0)
+                                if not stdout_data:
+                                    break
+                                print(f"Rclone progress: {stdout_data.decode().strip()}")
+                            except asyncio.TimeoutError:
+                                continue
+                            
+                        await process.wait()
+                        if process.returncode != 0:
+                            stderr = await process.stderr.read()
+                            print(f"Rclone error: {stderr.decode()}")
+                            raise Exception(f"Failed to upload file: {stderr.decode()}")
+                            
+                        # Generate download URL using B2 bucket URL
+                        file_url = f"https://f004.backblazeb2.com/file/{B2_BUCKET_NAME}/{file_path}"
                         print(f"File uploaded successfully: {file_url}")
                         
                         return {
@@ -1297,8 +1477,9 @@ memory_buffer_size = 200M
                     finally:
                         # Clean up temporary file
                         try:
-                            os.unlink(temp_file_path)
-                            print("Temporary file cleaned up")
+                            if os.path.exists(temp_file_path):
+                                os.unlink(temp_file_path)
+                                print("Temporary file cleaned up")
                         except Exception as e:
                             print(f"Error cleaning up temporary file: {str(e)}")
                 except Exception as e:
@@ -1308,7 +1489,7 @@ memory_buffer_size = 200M
                         detail=f"Error processing file {file.filename}: {str(e)}"
                     )
 
-        # Process files in parallel
+        # Process files in parallel with resource limits
         for file in files:
             file_path = f"{unique_folder}/{file.filename}"
             content_type = file.content_type or mimetypes.guess_type(file.filename)[0] or 'application/octet-stream'
@@ -1322,6 +1503,13 @@ memory_buffer_size = 200M
         save_file_metadata(unique_id, files_data)
         print(f"Saved metadata for upload ID: {unique_id}")
 
+        # Final storage check
+        stats = get_storage_stats()
+        if stats and stats["percent"] > 90:
+            print(f"WARNING: High storage usage after upload: {stats['percent']}%")
+            # Trigger cleanup in background
+            cleanup_temp_storage()
+
         return JSONResponse(content={
             "message": "Upload successful",
             "files": files_data,
@@ -1334,8 +1522,9 @@ memory_buffer_size = 200M
     finally:
         # Clean up config file
         try:
-            os.remove(rclone_config)
-            print("Rclone config file cleaned up")
+            if os.path.exists(rclone_config):
+                os.remove(rclone_config)
+                print("Rclone config file cleaned up")
         except Exception as e:
             print(f"Error cleaning up rclone config: {str(e)}")
 
@@ -1424,7 +1613,10 @@ async def file_page(file_id: str, background_tasks: BackgroundTasks):
     
     days_left = max(0, int((expiry_date - time.time()) / (24 * 60 * 60))) if expiry_date else 0
     
-    html_content = f"""<!DOCTYPE html>
+    # Convert background images to JavaScript array
+    background_images_js = json.dumps(BACKGROUND_IMAGES)
+    
+    return f"""<!DOCTYPE html>
     <html lang="sr">
     <head>
         <meta charset="UTF-8">
@@ -1729,66 +1921,48 @@ async def file_page(file_id: str, background_tasks: BackgroundTasks):
                 }}, 2000);
             }}
             
-            // Background images rotation
-            const backgroundImages = [
-                {{
-                    url: "https://images.pexels.com/photos/2387873/pexels-photo-2387873.jpeg",
-                    credit: "Foto: Francesco Ungaro na Pexels"
-                }},
-                {{
-                    url: "https://images.pexels.com/photos/2387876/pexels-photo-2387876.jpeg",
-                    credit: "Foto: Francesco Ungaro na Pexels"
-                }},
-                {{
-                    url: "https://images.pexels.com/photos/2387877/pexels-photo-2387877.jpeg",
-                    credit: "Foto: Francesco Ungaro na Pexels"
-                }}
-            ];
-            
+            // Background images configuration
+            const backgroundImages = {background_images_js};
             let currentImageIndex = 0;
-            const backgroundSection = document.querySelector('.background-section');
-            const backgroundCredit = document.querySelector('.background-credit');
             
-            function createBackgroundImage(url) {{
-                const img = document.createElement('img');
-                img.src = url;
-                img.className = 'background-image';
-                img.onload = function() {{
-                    img.classList.add('active');
-                }};
-                img.onerror = function() {{
-                    console.error('Failed to load background image:', url);
-                    // Try to load a fallback image
-                    img.src = 'https://images.pexels.com/photos/2387873/pexels-photo-2387873.jpeg';
-                }};
-                return img;
-            }}
-            
-            function rotateBackground() {{
-                if (!backgroundSection) return;
-                
-                const currentImage = document.querySelector('.background-image.active');
-                const nextImage = createBackgroundImage(backgroundImages[currentImageIndex].url);
-                
-                backgroundSection.appendChild(nextImage);
-                
-                if (currentImage) {{
-                    currentImage.classList.remove('active');
-                    setTimeout(() => currentImage.remove(), 500);
-                }}
-                
-                if (backgroundCredit) {{
-                    backgroundCredit.textContent = backgroundImages[currentImageIndex].credit;
-                }}
-                
-                currentImageIndex = (currentImageIndex + 1) % backgroundImages.length;
-            }}
-            
-            // Initialize background images when the page loads
             document.addEventListener('DOMContentLoaded', function() {{
-                if (backgroundSection) {{
-                    // Create and add the first image
-                    const firstImage = createBackgroundImage(backgroundImages[0].url);
+                const backgroundSection = document.querySelector('.background-section');
+                const backgroundCredit = document.querySelector('.background-credit');
+                
+                function createBackgroundImage(imageData) {{
+                    const img = document.createElement('img');
+                    img.src = imageData.url;
+                    img.className = 'background-image';
+                    img.onload = function() {{
+                        img.classList.add('active');
+                    }};
+                    return img;
+                }}
+                
+                function rotateBackground() {{
+                    if (!backgroundSection) return;
+                    
+                    const currentImage = document.querySelector('.background-image.active');
+                    const nextImageData = backgroundImages[currentImageIndex];
+                    const nextImage = createBackgroundImage(nextImageData);
+                    
+                    backgroundSection.appendChild(nextImage);
+                    
+                    if (currentImage) {{
+                        currentImage.classList.remove('active');
+                        setTimeout(() => currentImage.remove(), 500);
+                    }}
+                    
+                    if (backgroundCredit) {{
+                        backgroundCredit.textContent = nextImageData.credit;
+                    }}
+                    
+                    currentImageIndex = (currentImageIndex + 1) % backgroundImages.length;
+                }}
+                
+                // Initialize background
+                if (backgroundSection && backgroundImages.length > 0) {{
+                    const firstImage = createBackgroundImage(backgroundImages[0]);
                     backgroundSection.appendChild(firstImage);
                     if (backgroundCredit) {{
                         backgroundCredit.textContent = backgroundImages[0].credit;
@@ -1875,18 +2049,44 @@ async def download_file(file_id: str, filename: str, background_tasks: Backgroun
         file_url = requested_file["url"]
         content_type = requested_file.get("content_type", "application/octet-stream")
         
-        # Set up httpx client with proper timeout and limits
+        # Use rclone to stream the file
+        rclone_path = ensure_rclone()
+        rclone_config = create_rclone_config()
+        
         async def file_stream():
-            async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
-                async with client.stream('GET', file_url) as response:
-                    if response.status_code != 200:
-                        raise HTTPException(
-                            status_code=response.status_code,
-                            detail="Failed to fetch file from remote server"
-                        )
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    rclone_path,
+                    "--config", rclone_config,
+                    "cat",
+                    "--no-traverse",
+                    "--contimeout", "30s",
+                    "--timeout", "30s",
+                    "--retries", "3",
+                    "--low-level-retries", "10",
+                    f"b2:{B2_BUCKET_NAME}/{requested_file['file_path']}",
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                
+                while True:
+                    chunk = await process.stdout.read(CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    yield chunk
                     
-                    async for chunk in response.aiter_bytes(chunk_size=64 * 1024):  # 64KB chunks
-                        yield chunk
+                await process.wait()
+                if process.returncode != 0:
+                    stderr = await process.stderr.read()
+                    print(f"Rclone error: {stderr.decode()}")
+                    raise Exception(f"Failed to download file: {stderr.decode()}")
+            finally:
+                # Clean up config
+                try:
+                    if os.path.exists(rclone_config):
+                        os.remove(rclone_config)
+                except Exception as e:
+                    print(f"Error cleaning up rclone config: {str(e)}")
         
         # Set appropriate headers for the response
         headers = {
